@@ -115,6 +115,7 @@ class RpcInterface(typing.Protocol):
     async def request(
         self, mc: MethodCall, fix_id: str | None
     ) -> Awaitable[Response]: ...
+    def release(self) -> None: ...
 
 
 class RemoteRpcService(RpcInterface):
@@ -135,6 +136,9 @@ class RemoteRpcService(RpcInterface):
         (msg_id, expect) = self.expected.prepare(fix_id)
         await self._write_jsonrpc(id=msg_id, method=mc.method, params=mc.params)
         return expect
+
+    def release(self) -> None:
+        self.aout.close()
 
     async def response(
         self, tbd: Awaitable[Response], msg_id: int | str | None
@@ -158,6 +162,10 @@ class JsonRpcDuplexConnection:
         self.remote = RemoteRpcService(aio.aout)
 
     async def run(self, impl: RpcInterface) -> bool:
+        """Listen for JSONRPC message on stream input until stream EOF.
+
+        impl: implements the methods for RPC calls received on stream input
+        """
         async with asyncio.TaskGroup() as tg:
             try:
                 async for msg in self._stream_jsonrpc():
@@ -178,6 +186,7 @@ class JsonRpcDuplexConnection:
                 return False
             finally:
                 self.remote.expected.cancel_all()
+                impl.release()
 
     async def _stream_jsonrpc(self) -> AsyncIterator[JsonRpcMsg]:
         while (msg := await read_message(self._ain)) is not None:
@@ -185,9 +194,3 @@ class JsonRpcDuplexConnection:
                 yield JsonRpcMsg(msg)
             except ValueError as ex:
                 log(ex)
-
-
-async def relay_rpc_loop(src: RemoteRpcService, proxy: JsonRpcDuplexConnection) -> bool:
-    ok = await proxy.run(src)
-    await src.close()
-    return ok
