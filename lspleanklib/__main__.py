@@ -1,3 +1,3 @@
-from .cli import main
+from .lspleank import main
 
 exit(main())

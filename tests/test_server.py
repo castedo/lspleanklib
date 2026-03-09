@@ -15,7 +15,7 @@ from lspleanklib.jsonrpc import (
     read_message,
     write_message,
 )
-from lspleanklib.cli import (
+from lspleanklib.lspleank import (
     msg_loop,
     server_loop,
 )

@@ -17,7 +17,7 @@ classifiers = [
 keywords = ["lsp", "language-server-protocol","jsonrpc"]
 
 [project.scripts]
-lspleank = "lspleanklib:main"
+lspleank = "lspleanklib:lspleank:main"
 
 [tool.setuptools_scm]
 version_file = "_version.py"
