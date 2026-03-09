@@ -5,6 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "lspleanklib"
 dynamic = ["version"]
+description = ["Link LSP-enabled editors to Lake LSP servers"]
 authors = [{name = "Castedo Ellerman", email = "castedo@castedo.com"}]
 license = "MIT"
 license-files = ["LICENSE"]
