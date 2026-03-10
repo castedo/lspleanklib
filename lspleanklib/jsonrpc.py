@@ -65,13 +65,14 @@ class MethodCall:
 class ResponseError:
     code: int
     message: str
-    data: LspAny | None
+    data: LspAny | None = None
 
-    def __init__(self, msg: LspObject):
+    @staticmethod
+    def from_lsp_obj(msg: LspObject) -> ResponseError:
         code = msg.get('code')
-        self.code = code if isinstance(code, int) else ErrorCodes.UnknownErrorCode
-        self.message = str(msg.get('message'))
-        self.data = msg.get('data')
+        if not isinstance(code, int):
+            code = ErrorCodes.UnknownErrorCode
+        return ResponseError(code, str(msg.get('message')), msg.get('data'))
 
     def as_lsp_obj(self) -> LspObject:
         return self.__dict__
@@ -80,22 +81,21 @@ class ResponseError:
 @dataclass
 class Response:
     result: LspAny
-    error: ResponseError | None
+    error: ResponseError | None = None
 
-    def __init__(self, msg: LspObject):
+    @staticmethod
+    def from_lsp_obj(msg: LspObject) -> Response:
         error = msg.get('error')
         if error is None:
-            self.result = msg.get('result')
-            self.error = None
+            return Response(msg.get('result'))
         elif not isinstance(error, dict):
             raise ValueError('LSP errors must be JSON objects')
         else:
-            self.result = None
-            self.error = ResponseError(error)
+            return Response(None, ResponseError.from_lsp_obj(error))
 
     @staticmethod
     def from_error_code(ec: ErrorCodes) -> Response:
-        return Response({'error': ec, 'message': ec.name})
+        return Response(None, ResponseError(ec, ec.name))
 
 
 class JsonRpcMsg:
@@ -108,7 +108,7 @@ class JsonRpcMsg:
         self.id = typing.cast(int | str | None, msg.get('id'))
         method = msg.get('method')
         if method is None:
-            self.payload = Response(msg)
+            self.payload = Response.from_lsp_obj(msg)
         elif not isinstance(method, str):
             raise ValueError('LSP method names must be strings')
         else:

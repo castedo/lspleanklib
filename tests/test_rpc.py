@@ -31,7 +31,7 @@ class NullService(RpcInterface):
 
     async def request(self, mc: MethodCall, fix_id: str | None) -> Awaitable[Response]:
         async def trivial() -> Response:
-            return Response({"result": None})
+            return Response(None)
         return trivial()
 
     def release(self) -> None:
@@ -46,7 +46,7 @@ async def test_response():
             msg = await read_message(remote.ain)
             assert msg == {"jsonrpc":"2.0", "id": 1, "method": "do/thing", "params": None}
             await write_message(remote.aout, {"jsonrpc":"2.0", "id": 1, "result": "nothing"})
-            assert await tbd == Response({"result": "nothing"})
+            assert await tbd == Response("nothing")
             remote.aout.close()
     assert ta.result() == True
 
