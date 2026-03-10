@@ -2,7 +2,8 @@
 JSON-RPC
 """
 
-import asyncio, json, typing
+from __future__ import annotations
+import asyncio, enum, json, typing
 from asyncio import Future
 from collections.abc import AsyncIterator, Awaitable, Mapping, Sequence
 from dataclasses import dataclass
@@ -16,7 +17,10 @@ from .util import log
 LspAny: TypeAlias = None | str | int | Sequence['LspAny'] | Mapping[str, 'LspAny']
 LspObject: TypeAlias = Mapping[str, LspAny]
 MsgParams: TypeAlias = Sequence[LspAny] | Mapping[str, LspAny]
-ResponseError: TypeAlias = LspAny
+
+class ErrorCodes(enum.IntEnum):
+    UnknownErrorCode = -32001
+    ServerNotInitialized = -32002
 
 
 async def write_message(stream: MinimalWriter, msg: LspObject) -> None:
@@ -57,9 +61,40 @@ class MethodCall:
 
 
 @dataclass
+class ResponseError:
+    code: int
+    message: str
+    data: LspAny | None
+
+    def __init__(self, msg: LspObject):
+        code = msg.get('code')
+        self.code = code if isinstance(code, int) else ErrorCodes.UnknownErrorCode
+        self.message = str(msg.get('message'))
+        self.data = msg.get('data')
+
+    def as_lsp_obj(self) -> LspObject:
+        return self.__dict__
+
+
+@dataclass
 class Response:
-    result: LspAny = None
-    error: ResponseError | None = None
+    result: LspAny
+    error: ResponseError | None
+
+    def __init__(self, msg: LspObject):
+        error = msg.get('error')
+        if error is None:
+            self.result = msg.get('result')
+            self.error = None
+        elif not isinstance(error, dict):
+            raise ValueError('LSP errors must be JSON objects')
+        else:
+            self.result = None
+            self.error = ResponseError(error)
+
+    @staticmethod
+    def from_error_code(ec: ErrorCodes) -> Response:
+        return Response({'error': ec, 'message': ec.name})
 
 
 class JsonRpcMsg:
@@ -72,7 +107,7 @@ class JsonRpcMsg:
         self.id = typing.cast(int | str | None, msg.get('id'))
         method = msg.get('method')
         if method is None:
-            self.payload = Response(msg.get('result'), msg.get('error'))
+            self.payload = Response(msg)
         elif not isinstance(method, str):
             raise ValueError('LSP method names must be strings')
         else:
@@ -146,7 +181,7 @@ class RemoteRpcService(RpcInterface):
         try:
             response = await tbd
             if response.error is not None:
-                await self._write_jsonrpc(id=msg_id, error=response.error)
+                await self._write_jsonrpc(id=msg_id, error=response.error.as_lsp_obj())
             else:
                 await self._write_jsonrpc(id=msg_id, result=response.result)
         except asyncio.CancelledError as ex:
