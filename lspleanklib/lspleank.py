@@ -2,31 +2,79 @@
 Link LSP-enabled editors to Lake LSP servers
 """
 
+from __future__ import annotations
 import argparse, asyncio, sys
-from asyncio.subprocess import PIPE
+from asyncio.subprocess import PIPE, Process
+from collections.abc import Awaitable
 
 from .aio import DuplexStream, ReadFilePump, WriterFileAdapter
 from .cli import AsyncMainLoopThread, split_cmd_line, version
-from .jsonrpc import JsonRpcDuplexConnection
+from .jsonrpc import (
+    ErrorCodes,
+    JsonRpcDuplexConnection,
+    MethodCall,
+    Response,
+    RpcInterface,
+)
 from .util import log
 
 
-async def msg_loop(super_io: DuplexStream, sub_io: DuplexStream) -> bool:
-    super_con = JsonRpcDuplexConnection(super_io)
-    sub_con = JsonRpcDuplexConnection(sub_io)
-    async with asyncio.TaskGroup() as tg:
-        t_super = tg.create_task(sub_con.run(super_con.remote))
-        t_sub = tg.create_task(super_con.run(sub_con.remote))
-    return t_super.result() and t_sub.result()
+class LeankSession:
+    def __init__(self, proc: Process):
+        assert proc.stdin and proc.stdout
+        self._proc = proc
+        self.sub_con = JsonRpcDuplexConnection(DuplexStream(proc.stdout, proc.stdin))
+
+    @staticmethod
+    async def anew(lsp_cmd: list[str]) -> LeankSession:
+        proc = await asyncio.create_subprocess_exec(*lsp_cmd, stdin=PIPE, stdout=PIPE)
+        return LeankSession(proc)
+
+    @property
+    def remote_interface(self) -> RpcInterface:
+        return self.sub_con.remote
+
+    async def run(self, editor: RpcInterface) -> bool:
+        await self.sub_con.run(editor)
+        await self._proc.communicate()
+        return self._proc.returncode == 0
 
 
-async def server_loop(super_io: DuplexStream, lsp_cmd: list[str]) -> int:
-    sub_proc = await asyncio.create_subprocess_exec(*lsp_cmd, stdin=PIPE, stdout=PIPE)
-    assert sub_proc.stdin and sub_proc.stdout
-    sub_io = DuplexStream(sub_proc.stdout, sub_proc.stdin)
-    ok = await msg_loop(super_io, sub_io)
-    await sub_proc.communicate()
-    return sub_proc.returncode if ok and sub_proc.returncode is not None else 1
+async def future_error(ec: ErrorCodes) -> Response:
+    return Response.from_error_code(ec)
+
+
+class StandardizedLspServer(RpcInterface):
+    def __init__(self, lsp_cmd: list[str]):
+        self._lsp_cmd = lsp_cmd
+        self._session: LeankSession | None = None
+
+    async def run(self, super_con: JsonRpcDuplexConnection) -> bool:
+        async with asyncio.TaskGroup() as tg:
+            self._session = await LeankSession.anew(self._lsp_cmd)
+            t_serv = tg.create_task(super_con.run(self))
+            t_sess = tg.create_task(self._session.run(super_con.remote))
+        return t_serv.result() and t_sess.result()
+
+    async def notify(self, mc: MethodCall) -> None:
+        if self._session is not None:
+            await self._session.remote_interface.notify(mc)
+
+    async def request(self, mc: MethodCall, fix_id: str | None) -> Awaitable[Response]:
+        if self._session is not None:
+            return await self._session.remote_interface.request(mc, fix_id)
+        else:
+            return future_error(ErrorCodes.ServerNotInitialized)
+
+    def release(self) -> None:
+        if self._session is not None:
+            self._session.remote_interface.release()
+
+
+async def server_loop(stdio: DuplexStream, lsp_cmd: list[str]) -> int:
+    super_con = JsonRpcDuplexConnection(stdio)
+    lsp_server = StandardizedLspServer(lsp_cmd)
+    return 0 if await lsp_server.run(super_con) else 1
 
 
 def get_extern_cmd(cmd_line_args: list[str]) -> list[str]:

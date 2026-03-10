@@ -18,6 +18,7 @@ LspAny: TypeAlias = None | str | int | Sequence['LspAny'] | Mapping[str, 'LspAny
 LspObject: TypeAlias = Mapping[str, LspAny]
 MsgParams: TypeAlias = Sequence[LspAny] | Mapping[str, LspAny]
 
+
 class ErrorCodes(enum.IntEnum):
     UnknownErrorCode = -32001
     ServerNotInitialized = -32002

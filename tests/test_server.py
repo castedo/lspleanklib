@@ -11,14 +11,12 @@ from lspleanklib.aio import (
     WriterFileAdapter,
 )
 from lspleanklib.jsonrpc import (
+    JsonRpcDuplexConnection,
     LspObject,
     read_message,
     write_message,
 )
-from lspleanklib.lspleank import (
-    msg_loop,
-    server_loop,
-)
+from lspleanklib.lspleank import server_loop
 
 from util import aio_xpipe, pipe_stream_reader
 
@@ -46,6 +44,15 @@ async def a_pipe():
             reader = await pipe_stream_reader(fr, loop)
             writer = WriterFileAdapter(fw, loop)
             yield DuplexStream(reader, writer)
+
+
+async def msg_loop(super_io: DuplexStream, sub_io: DuplexStream) -> bool:
+    super_con = JsonRpcDuplexConnection(super_io)
+    sub_con = JsonRpcDuplexConnection(sub_io)
+    async with asyncio.TaskGroup() as tg:
+        t_super = tg.create_task(sub_con.run(super_con.remote))
+        t_sub = tg.create_task(super_con.run(sub_con.remote))
+    return t_super.result() and t_sub.result()
 
 
 @pytest.fixture
