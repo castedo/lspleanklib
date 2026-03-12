@@ -3,7 +3,7 @@ Link LSP-enabled editors to Lake LSP servers
 """
 
 from __future__ import annotations
-import argparse, asyncio, sys
+import argparse, asyncio, logging, sys
 from asyncio import TaskGroup
 from asyncio.subprocess import PIPE, Process
 from collections.abc import Awaitable
@@ -16,6 +16,7 @@ from .jsonrpc import (
     MethodCall,
     Response,
     RpcInterface,
+    future_error,
 )
 from .util import log
 
@@ -25,6 +26,9 @@ class LeankSession:
         assert proc.stdin and proc.stdout
         self._proc = proc
         self._sub_con = JsonRpcDuplexConnection(DuplexStream(proc.stdout, proc.stdin))
+
+    def close(self) -> None:
+        self.remote_interface.close()
 
     @staticmethod
     async def anew(lsp_cmd: list[str]) -> LeankSession:
@@ -42,10 +46,6 @@ class LeankSession:
         await self._sub_con.run(editor)
         await self._proc.communicate()
         return self.done_ok()
-
-
-async def future_error(ec: ErrorCodes) -> Response:
-    return Response.from_error_code(ec)
 
 
 class StandardizedLspServer(RpcInterface):
@@ -71,18 +71,18 @@ class StandardizedLspServer(RpcInterface):
         else:
             return future_error(ErrorCodes.ServerNotInitialized)
 
-    def release(self) -> None:
+    def close(self) -> None:
         if self._session is None:
-            self._editor.release()
+            self._editor.close()
         else:
-            self._session.remote_interface.release()
+            self._session.close()
 
 
 async def server_loop(stdio: DuplexStream, lsp_cmd: list[str]) -> int:
-    super_con = JsonRpcDuplexConnection(stdio)
+    editor_con = JsonRpcDuplexConnection(stdio)
     async with TaskGroup() as tg:
-        server = StandardizedLspServer(lsp_cmd, super_con.remote, tg)
-        t_serv = tg.create_task(super_con.run(server))
+        server = StandardizedLspServer(lsp_cmd, editor_con.remote, tg)
+        t_serv = tg.create_task(editor_con.run(server))
     ok = t_serv.result() and server.sessions_done_ok()
     return 0 if ok else 1
 
@@ -97,6 +97,8 @@ def get_extern_cmd(cmd_line_args: list[str]) -> list[str]:
 
 
 def main(cmd_line_args: list[str] | None = None) -> int:
+    logging.basicConfig()
+    logging.captureWarnings(True)
     if cmd_line_args is None:
         cmd_line_args = sys.argv[1:]
     extern_cmd = get_extern_cmd(cmd_line_args)
@@ -109,8 +111,8 @@ def main(cmd_line_args: list[str] | None = None) -> int:
     try:
         amain_thread.join()
     except KeyboardInterrupt as ex:
-        log(ex)
+        log.exception(ex)
     if amain_thread.retcode is None:
-        log('Async main loop thread did not complete properly')
+        log.debug('Async main loop thread did not complete properly')
         return 1
     return amain_thread.retcode

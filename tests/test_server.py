@@ -176,9 +176,9 @@ async def test_definition(msg_loop_trio, capsys):
     assert captured.err == ""
 
 
-async def test_empty_stdin_subproc():
+async def test_empty_stdin_subproc() -> None:
     async with aio_xpipe() as (outer, inner):
-        tloop = asyncio.create_task(server_loop(inner, ("cat",)))
+        tloop = asyncio.create_task(server_loop(inner, ["cat"]))
         outer.aout.close()
         retcode = await tloop
         assert retcode == 0
@@ -187,7 +187,7 @@ async def test_empty_stdin_subproc():
 @skipif_no_pylsp
 async def test_loop_pylsp():
     async with aio_xpipe() as (outer, inner):
-        tloop = asyncio.create_task(server_loop(inner, ("pylsp",)))
+        tloop = asyncio.create_task(server_loop(inner, ["pylsp"]))
         outer.aout.write(INIT_BYTES)
         await outer.aout.drain()
         msg = await read_message(outer.ain)
@@ -198,18 +198,19 @@ async def test_loop_pylsp():
         assert retcode == 0
 
 
-async def test_bogus_stdin(capsys):
+async def test_bogus_stdin(caplog, capsys) -> None:
     async with aio_xpipe() as (outer, inner):
-        tloop = asyncio.create_task(server_loop(inner, ("cat",)))
+        tloop = asyncio.create_task(server_loop(inner, ["cat"]))
         outer.aout.write(b"BOGUS")
         await outer.aout.drain()
         outer.aout.close()
         retcode = await tloop
         assert retcode == 1
         assert await outer.ain.read() == b''
+        assert caplog.records
         captured = capsys.readouterr()
         assert captured.out == ""
-        assert len(captured.err)
+        assert captured.err == ""
 
 
 @skipif_no_pylsp

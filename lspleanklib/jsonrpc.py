@@ -8,6 +8,7 @@ from asyncio import Future
 from collections.abc import AsyncIterator, Awaitable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TypeAlias
+from warnings import warn
 
 from .aio import DuplexStream, MinimalReader, MinimalWriter
 from .util import log
@@ -22,6 +23,7 @@ MsgParams: TypeAlias = Sequence[LspAny] | Mapping[str, LspAny]
 class ErrorCodes(enum.IntEnum):
     UnknownErrorCode = -32001
     ServerNotInitialized = -32002
+    InternalError = -32603
 
 
 async def write_message(stream: MinimalWriter, msg: LspObject) -> None:
@@ -78,6 +80,10 @@ class ResponseError:
         return self.__dict__
 
 
+async def future_error(ec: ErrorCodes) -> Response:
+    return Response.from_error_code(ec)
+
+
 @dataclass
 class Response:
     result: LspAny
@@ -121,6 +127,9 @@ class ExpectedResponses:
         self._todo: dict[int | str | None, Future[Response]] = {}
         self.next_id = 1
 
+    def __bool__(self) -> bool:
+        return bool(self._todo)
+
     def cancel_all(self) -> None:
         while self._todo:
             msg_id, expect = self._todo.popitem()
@@ -132,7 +141,7 @@ class ExpectedResponses:
             self.next_id += 1
         stale = self._todo.pop(msg_id, None)
         if stale is not None:
-            log(f"Response abandoned due to id reuse by new request: {msg_id}")
+            warn(f"Response abandoned due to id reuse by new request: {msg_id}")
             stale.cancel()
         expect: Future[Response] = asyncio.get_running_loop().create_future()
         self._todo[msg_id] = expect
@@ -143,25 +152,24 @@ class ExpectedResponses:
         if expect:
             expect.set_result(response)
         else:
-            log(f"Unexpected response with id: {msg_id}")
+            warn(f"Unexpected response with id: {msg_id}")
 
 
 class RpcInterface(typing.Protocol):
+    def close(self) -> None: ...
     async def notify(self, mc: MethodCall) -> None: ...
     async def request(
         self, mc: MethodCall, fix_id: str | None
     ) -> Awaitable[Response]: ...
-    def release(self) -> None: ...
 
 
-class RemoteRpcService(RpcInterface):
+class RemoteRpcInterface(RpcInterface):
     def __init__(self, aout: MinimalWriter):
         self.aout = aout
         self.expected = ExpectedResponses()
 
-    async def close(self) -> None:
+    def close(self) -> None:
         self.aout.close()
-        await self.aout.wait_closed()
 
     async def notify(self, mc: MethodCall) -> None:
         await self._write_jsonrpc(method=mc.method, params=mc.params)
@@ -173,8 +181,6 @@ class RemoteRpcService(RpcInterface):
         await self._write_jsonrpc(id=msg_id, method=mc.method, params=mc.params)
         return expect
 
-    def release(self) -> None:
-        self.aout.close()
 
     async def response(
         self, tbd: Awaitable[Response], msg_id: int | str | None
@@ -186,7 +192,7 @@ class RemoteRpcService(RpcInterface):
             else:
                 await self._write_jsonrpc(id=msg_id, result=response.result)
         except asyncio.CancelledError as ex:
-            log(ex)
+            log.exception(ex)
 
     async def _write_jsonrpc(self, **kwargs: LspAny) -> None:
         await write_message(self.aout, dict(jsonrpc='2.0', **kwargs))
@@ -195,7 +201,7 @@ class RemoteRpcService(RpcInterface):
 class JsonRpcDuplexConnection:
     def __init__(self, aio: DuplexStream):
         self._ain = aio.ain
-        self.remote = RemoteRpcService(aio.aout)
+        self.remote = RemoteRpcInterface(aio.aout)
 
     async def run(self, impl: RpcInterface) -> bool:
         """Listen for JSONRPC message on stream input until stream EOF.
@@ -215,18 +221,18 @@ class JsonRpcDuplexConnection:
                         tg.create_task(self.remote.response(tbd_response, msg.id))
                 return True
             except ValueError as ex:
-                log(ex)
+                log.exception(ex)
                 return False
             except IOError as ex:
-                log(ex)
+                log.exception(ex)
                 return False
             finally:
                 self.remote.expected.cancel_all()
-                impl.release()
+                impl.close()
 
     async def _stream_jsonrpc(self) -> AsyncIterator[JsonRpcMsg]:
         while (msg := await read_message(self._ain)) is not None:
             try:
                 yield JsonRpcMsg(msg)
             except ValueError as ex:
-                log(ex)
+                log.exception(ex)
