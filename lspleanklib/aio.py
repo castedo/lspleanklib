@@ -13,6 +13,7 @@ class MinimalWriter(typing.Protocol):
     async def drain(self) -> None: ...
     def close(self) -> None: ...
     async def wait_closed(self) -> None: ...
+    def is_closing(self) -> bool: ...
 
 
 class MinimalReader(typing.Protocol):
@@ -60,6 +61,9 @@ class WriterFileAdapter(MinimalWriter):
         if self._closing is None:
             raise ValueError('file not closed')
         await self._closing
+
+    def is_closing(self) -> bool:
+        return self._closing is not None
 
 
 class ReadFilePump:

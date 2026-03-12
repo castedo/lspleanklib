@@ -14,6 +14,7 @@ from lspleanklib.jsonrpc import (
     JsonRpcDuplexConnection,
     LspObject,
     read_message,
+    write_jsonrpc,
     write_message,
 )
 from lspleanklib.lspleank import server_loop
@@ -29,6 +30,12 @@ TESTS_DIR = Path(__file__).parent
 TEST_CASES = TESTS_DIR / "cases"
 INIT_BYTES = (TEST_CASES / "vim9-lsp-init.txt").read_bytes()
 
+
+async def write_notify(aout, method, params) -> None:
+    await write_jsonrpc(aout, method=method, params=params)
+
+async def write_request(aout, method, params, id) -> None:
+    await write_jsonrpc(aout, method=method, params=params, id=id)
 
 async def readexactly(f: BinaryIO, n: int) -> bytes:
     loop = asyncio.get_running_loop()
@@ -193,6 +200,8 @@ async def test_loop_pylsp():
         msg = await read_message(outer.ain)
         assert msg['id'] == 1
         assert msg['result']['serverInfo']['name'] == "pylsp"
+        await write_request(outer.aout, "shutdown", None, 2)
+        await write_notify(outer.aout, "exit", None)
         outer.aout.close()
         retcode = await tloop
         assert retcode == 0
@@ -227,6 +236,8 @@ async def test_sub_exec_pylsp(cmdline):
     msg = await read_message(proc.stdout)
     assert msg['id'] == 1
     assert msg['result']['serverInfo']['name'] == "pylsp"
+    await write_request(proc.stdin, "shutdown", None, 2)
+    await write_notify(proc.stdin, "exit", None)
     await proc.communicate()
     assert proc.returncode == 0
 

@@ -28,7 +28,7 @@ class LeankSession:
         self._sub_con = JsonRpcDuplexConnection(DuplexStream(proc.stdout, proc.stdin))
 
     def close(self) -> None:
-        self.remote_interface.close()
+        self.proxy.close()
 
     @staticmethod
     async def anew(lsp_cmd: list[str]) -> LeankSession:
@@ -36,7 +36,7 @@ class LeankSession:
         return LeankSession(proc)
 
     @property
-    def remote_interface(self) -> RpcInterface:
+    def proxy(self) -> RpcInterface:
         return self._sub_con.remote
 
     def done_ok(self) -> bool:
@@ -60,14 +60,14 @@ class StandardizedLspServer(RpcInterface):
 
     async def notify(self, mc: MethodCall) -> None:
         if self._session is not None:
-            await self._session.remote_interface.notify(mc)
+            await self._session.proxy.notify(mc)
 
     async def request(self, mc: MethodCall, fix_id: str | None) -> Awaitable[Response]:
         if self._session is None and mc.method == 'initialize':
             self._session = await LeankSession.anew(self._lsp_cmd)
             self._tg.create_task(self._session.run(self._editor))
         if self._session is not None:
-            return await self._session.remote_interface.request(mc, fix_id)
+            return await self._session.proxy.request(mc, fix_id)
         else:
             return future_error(ErrorCodes.ServerNotInitialized)
 
