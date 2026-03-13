@@ -19,7 +19,7 @@ from lspleanklib.jsonrpc import (
     write_jsonrpc,
     write_message,
 )
-from lspleanklib.lspleank import server_loop
+from lspleanklib.lspleank import SubprocessLeankFactory, server_loop
 
 from util import aio_xpipe, pipe_stream_reader
 
@@ -187,7 +187,8 @@ async def test_definition(msg_loop_trio, capsys):
 
 async def test_empty_stdin_subproc() -> None:
     async with aio_xpipe() as (outer, inner):
-        tloop = asyncio.create_task(server_loop(inner, ["cat"]))
+        factory = SubprocessLeankFactory(["cat"])
+        tloop = asyncio.create_task(server_loop(inner, factory))
         outer.aout.close()
         retcode = await tloop
         assert retcode == 0
@@ -196,7 +197,8 @@ async def test_empty_stdin_subproc() -> None:
 @skipif_no_pylsp
 async def test_loop_pylsp():
     async with aio_xpipe() as (outer, inner):
-        tloop = asyncio.create_task(server_loop(inner, ["pylsp"]))
+        factory = SubprocessLeankFactory(["pylsp"])
+        tloop = asyncio.create_task(server_loop(inner, factory))
         outer.aout.write(INIT_BYTES)
         await outer.aout.drain()
         msg = await read_message(outer.ain)
@@ -211,7 +213,8 @@ async def test_loop_pylsp():
 
 async def test_bogus_stdin(caplog, capsys) -> None:
     async with aio_xpipe() as (outer, inner):
-        tloop = asyncio.create_task(server_loop(inner, ["cat"]))
+        factory = SubprocessLeankFactory(["cat"])
+        tloop = asyncio.create_task(server_loop(inner, factory))
         outer.aout.write(b"BOGUS")
         await outer.aout.drain()
         outer.aout.close()
