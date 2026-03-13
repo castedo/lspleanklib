@@ -6,8 +6,8 @@ from __future__ import annotations
 import asyncio, enum, json, typing
 from asyncio import Future
 from collections.abc import AsyncIterator, Awaitable, Mapping, Sequence
-from dataclasses import dataclass
-from typing import TypeAlias
+from dataclasses import asdict, dataclass
+from typing import Any, TypeAlias
 from warnings import warn
 
 from .aio import DuplexStream, MinimalReader, MinimalWriter
@@ -26,7 +26,7 @@ class ErrorCodes(enum.IntEnum):
     InternalError = -32603
 
 
-async def write_message(stream: MinimalWriter, msg: LspObject) -> None:
+async def write_message(stream: MinimalWriter, msg: Mapping[str, Any]) -> None:
     body = json.dumps(msg, separators=(',', ':')).encode()
     header = f"Content-Length: {len(body)}\r\n\r\n".encode()
     stream.write(header)
@@ -34,11 +34,7 @@ async def write_message(stream: MinimalWriter, msg: LspObject) -> None:
     await stream.drain()
 
 
-async def write_jsonrpc(aout: MinimalWriter, **kwargs: LspAny) -> None:
-    await write_message(aout, dict(jsonrpc='2.0', **kwargs))
-
-
-async def read_message(stream: MinimalReader) -> LspObject | None:
+async def read_message(stream: MinimalReader) -> dict[str, Any] | None:
     body_length = 0
     try:
         while True:
@@ -54,7 +50,7 @@ async def read_message(stream: MinimalReader) -> LspObject | None:
         ret = json.loads(body)
         if not isinstance(ret, dict):
             raise ValueError("expecting JSON-RPC message to be JSON object")
-        return typing.cast(LspObject, ret)
+        return ret
     except asyncio.exceptions.IncompleteReadError as ex:
         if ex.partial:
             raise ValueError("truncated stream input") from ex
@@ -65,6 +61,9 @@ async def read_message(stream: MinimalReader) -> LspObject | None:
 class MethodCall:
     method: str
     params: MsgParams | None
+
+    def to_lsp_obj(self) -> LspObject:
+        return asdict(self)
 
 
 @dataclass
@@ -79,9 +78,6 @@ class ResponseError:
         if not isinstance(code, int):
             code = ErrorCodes.UnknownErrorCode
         return ResponseError(code, str(msg.get('message')), msg.get('data'))
-
-    def as_lsp_obj(self) -> LspObject:
-        return self.__dict__
 
 
 async def future_error(ec: ErrorCodes) -> Response:
@@ -107,23 +103,41 @@ class Response:
     def from_error_code(ec: ErrorCodes) -> Response:
         return Response(None, ResponseError(ec, ec.name))
 
+    def to_lsp_obj(self) -> LspObject:
+        if self.error:
+            return {'error': asdict(self.error)}
+        else:
+            return {'result': self.result}
 
+
+@dataclass
 class JsonRpcMsg:
-    id: int | str | None
     payload: MethodCall | Response
+    id: int | str | None = None
 
-    def __init__(self, msg: LspObject):
+    @staticmethod
+    def from_jsonrpc(msg: LspObject) -> JsonRpcMsg:
         if msg.get('jsonrpc') != '2.0':
             raise ValueError('JSON object is not JSON-RPC 2.0 message')
-        self.id = typing.cast(int | str | None, msg.get('id'))
+        msg_id = typing.cast(int | str | None, msg.get('id'))
         method = msg.get('method')
         if method is None:
-            self.payload = Response.from_lsp_obj(msg)
+            return JsonRpcMsg(Response.from_lsp_obj(msg), msg_id)
         elif not isinstance(method, str):
             raise ValueError('LSP method names must be strings')
         else:
             params = typing.cast(MsgParams | None, msg.get('params'))
-            self.payload = MethodCall(method, params)
+            return JsonRpcMsg(MethodCall(method, params), msg_id)
+
+    def to_lsp_obj(self) -> LspObject:
+        ret: dict[str, LspAny] = {} if self.id is None else {'id': self.id}
+        ret.update(self.payload.to_lsp_obj())
+        ret['jsonrpc'] = '2.0'
+        return ret
+
+
+async def write_jsonrpc(aout: MinimalWriter, msg: JsonRpcMsg) -> None:
+    await write_message(aout, msg.to_lsp_obj())
 
 
 class IncommingResponses:
@@ -172,7 +186,7 @@ class RemoteRpcProxy(RpcInterface):
         if self._aout.is_closing():
             warn('notify called on closed or closing RPC connection')
             return
-        await write_jsonrpc(self._aout, method=mc.method, params=mc.params)
+        await write_jsonrpc(self._aout, JsonRpcMsg(mc))
 
     async def request(
         self, mc: MethodCall, fix_id: str | None = None
@@ -181,7 +195,7 @@ class RemoteRpcProxy(RpcInterface):
             warn('request called on closed or closing RPC connection')
             return future_error(ErrorCodes.InternalError)
         (msg_id, expect) = self._expecting.prepare(fix_id)
-        await write_jsonrpc(self._aout, id=msg_id, method=mc.method, params=mc.params)
+        await write_jsonrpc(self._aout, JsonRpcMsg(mc, msg_id))
         return expect
 
     def got_response(self, response: Response, msg_id: int | str | None) -> None:
@@ -202,11 +216,7 @@ async def await_send_response(
 ) -> None:
     try:
         response = await tbd
-        if response.error is not None:
-            error = response.error.as_lsp_obj()
-            await write_jsonrpc(aout, id=msg_id, error=error)
-        else:
-            await write_jsonrpc(aout, id=msg_id, result=response.result)
+        await write_jsonrpc(aout, JsonRpcMsg(response, msg_id))
     except asyncio.CancelledError as ex:
         log.exception(ex)
 
@@ -259,6 +269,6 @@ class JsonRpcDuplexConnection:
     async def _stream_jsonrpc(self) -> AsyncIterator[JsonRpcMsg]:
         while (msg := await read_message(self._aio.ain)) is not None:
             try:
-                yield JsonRpcMsg(msg)
+                yield JsonRpcMsg.from_jsonrpc(msg)
             except ValueError as ex:
                 log.exception(ex)

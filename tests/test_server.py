@@ -12,7 +12,9 @@ from lspleanklib.aio import (
 )
 from lspleanklib.jsonrpc import (
     JsonRpcDuplexConnection,
+    JsonRpcMsg,
     LspObject,
+    MethodCall,
     read_message,
     write_jsonrpc,
     write_message,
@@ -32,10 +34,10 @@ INIT_BYTES = (TEST_CASES / "vim9-lsp-init.txt").read_bytes()
 
 
 async def write_notify(aout, method, params) -> None:
-    await write_jsonrpc(aout, method=method, params=params)
+    await write_jsonrpc(aout, JsonRpcMsg(MethodCall(method, params)))
 
 async def write_request(aout, method, params, id) -> None:
-    await write_jsonrpc(aout, method=method, params=params, id=id)
+    await write_jsonrpc(aout, JsonRpcMsg(MethodCall(method, params), id))
 
 async def readexactly(f: BinaryIO, n: int) -> bytes:
     loop = asyncio.get_running_loop()
