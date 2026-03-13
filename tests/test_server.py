@@ -54,11 +54,11 @@ async def a_pipe():
 
 
 async def msg_loop(super_io: DuplexStream, sub_io: DuplexStream) -> bool:
-    super_con = JsonRpcDuplexConnection(super_io)
-    sub_con = JsonRpcDuplexConnection(sub_io)
+    super_con = JsonRpcDuplexConnection(super_io, 'super')
+    sub_con = JsonRpcDuplexConnection(sub_io, 'sub')
     async with asyncio.TaskGroup() as tg:
-        t_super = tg.create_task(sub_con.run(super_con.remote))
-        t_sub = tg.create_task(super_con.run(sub_con.remote))
+        t_super = tg.create_task(sub_con.pump(super_con.proxy))
+        t_sub = tg.create_task(super_con.pump(sub_con.proxy))
     return t_super.result() and t_sub.result()
 
 

@@ -1,13 +1,13 @@
 import pytest
 
-import asyncio, contextlib
+import asyncio
 from collections.abc import Awaitable
 
 from lspleanklib.jsonrpc import (
     JsonRpcDuplexConnection,
     MethodCall,
-    RpcInterface,
     Response,
+    RpcInterface,
     read_message,
     write_message,
 )
@@ -40,9 +40,9 @@ class NullService(RpcInterface):
 async def test_response() -> None:
     async with aio_xpipe() as (local, remote):
         async with asyncio.TaskGroup() as tg:
-            con = JsonRpcDuplexConnection(local)
-            ta = tg.create_task(con.run(NotImplementedService()))
-            tbd = await con.remote.request(MethodCall("do/thing", None), None)
+            con = JsonRpcDuplexConnection(local, 'local')
+            ta = tg.create_task(con.pump(NotImplementedService()))
+            tbd = await con.proxy.request(MethodCall("do/thing", None), None)
             msg = await read_message(remote.ain)
             assert msg == {"jsonrpc":"2.0", "id": 1, "method": "do/thing", "params": None}
             await write_message(remote.aout, {"jsonrpc":"2.0", "id": 1, "result": "nothing"})
@@ -54,9 +54,9 @@ async def test_response() -> None:
 async def test_response_cancelled() -> None:
     async with aio_xpipe() as (local, remote):
         async with asyncio.TaskGroup() as tg:
-            con = JsonRpcDuplexConnection(local)
-            ta = tg.create_task(con.run(NotImplementedService()))
-            tbd = await con.remote.request(MethodCall("do/thing", None), None)
+            con = JsonRpcDuplexConnection(local, 'local')
+            ta = tg.create_task(con.pump(NotImplementedService()))
+            tbd = await con.proxy.request(MethodCall("do/thing", None), None)
             msg = await read_message(remote.ain)
             assert msg == {"jsonrpc":"2.0", "id": 1, "method": "do/thing", "params": None}
             remote.aout.close()
@@ -73,8 +73,8 @@ async def test_response_cancelled() -> None:
 async def test_simple_serve() -> None:
     async with aio_xpipe() as (local, remote):
         async with asyncio.TaskGroup() as tg:
-            con = JsonRpcDuplexConnection(local)
-            ta = tg.create_task(con.run(NullService()))
+            con = JsonRpcDuplexConnection(local, 'local')
+            ta = tg.create_task(con.pump(NullService()))
             await write_message(remote.aout, {"jsonrpc":"2.0", "id": 1, "method": "nothing"})
             msg = await read_message(remote.ain)
             assert msg == {"jsonrpc":"2.0", "id": 1, "result": None}

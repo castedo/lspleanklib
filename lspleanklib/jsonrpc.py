@@ -160,7 +160,6 @@ class IncommingResponses:
 
 
 class RpcInterface(typing.Protocol):
-    def close(self) -> None: ...
     async def notify(self, mc: MethodCall) -> None: ...
     async def request(
         self, mc: MethodCall, fix_id: str | None
@@ -170,10 +169,7 @@ class RpcInterface(typing.Protocol):
 class RemoteRpcProxy(RpcInterface):
     def __init__(self, aout: MinimalWriter):
         self.aout = aout
-        self.expected = IncommingResponses()
-
-    def close(self) -> None:
-        self.aout.close()
+        self.expecting = IncommingResponses()
 
     async def notify(self, mc: MethodCall) -> None:
         if self.aout.is_closing():
@@ -183,7 +179,7 @@ class RemoteRpcProxy(RpcInterface):
     async def request(
         self, mc: MethodCall, fix_id: str | None = None
     ) -> Awaitable[Response]:
-        (msg_id, expect) = self.expected.prepare(fix_id)
+        (msg_id, expect) = self.expecting.prepare(fix_id)
         await self._write_jsonrpc(id=msg_id, method=mc.method, params=mc.params)
         return expect
 
@@ -205,29 +201,34 @@ class RemoteRpcProxy(RpcInterface):
 
 
 class JsonRpcDuplexConnection:
-    def __init__(self, aio: DuplexStream):
-        self._ain = aio.ain
-        self.remote = RemoteRpcProxy(aio.aout)
+    def __init__(self, aio: DuplexStream, name: str):
+        self._aio = aio
+        self.proxy = RemoteRpcProxy(aio.aout)
+        self.name = name
 
-    async def run(self, impl: RpcInterface) -> bool:
+    async def pump(self, impl: RpcInterface) -> bool:
         """Listen for JSONRPC message on stream input until stream EOF.
 
         impl: implements the methods for RPC calls received on stream input
         """
-        async with asyncio.TaskGroup() as tg:
-            try:
-                async for msg in self._stream_jsonrpc():
-                    await self._process_msg(msg, impl, tg)
-                return True
-            except (ValueError, IOError) as ex:
-                log.exception(ex)
-                return False
-            finally:
-                self.remote.expected.cancel_all()
-                impl.close()
+        try:
+            async with asyncio.TaskGroup() as tg:
+                try:
+                    async for msg in self._stream_jsonrpc():
+                        await self._process_msg(msg, impl, tg)
+                    return True
+                except (ValueError, IOError) as ex:
+                    log.exception(ex)
+                    return False
+                finally:
+                    self.proxy.expecting.cancel_all()
+                    log.debug(f"{self.name} pump done reading responses")
+        finally:
+            self._aio.aout.close()
+            log.debug(f"{self.name} pump closing output stream")
 
     async def _stream_jsonrpc(self) -> AsyncIterator[JsonRpcMsg]:
-        while (msg := await read_message(self._ain)) is not None:
+        while (msg := await read_message(self._aio.ain)) is not None:
             try:
                 yield JsonRpcMsg(msg)
             except ValueError as ex:
@@ -237,10 +238,10 @@ class JsonRpcDuplexConnection:
         self, msg: JsonRpcMsg, impl: RpcInterface, tg: asyncio.TaskGroup
     ) -> None:
         if isinstance(msg.payload, Response):
-            self.remote.expected.got_response(msg.payload, msg.id)
+            self.proxy.expecting.got_response(msg.payload, msg.id)
         elif msg.id is None:
             await impl.notify(msg.payload)
         else:
             fix_id = msg.id if isinstance(msg.id, str) else None
             tbd_response = await impl.request(msg.payload, fix_id)
-            tg.create_task(self.remote.response(tbd_response, msg.id))
+            tg.create_task(self.proxy.response(tbd_response, msg.id))

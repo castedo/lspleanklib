@@ -25,10 +25,8 @@ class LeankSession:
     def __init__(self, proc: Process):
         assert proc.stdin and proc.stdout
         self._proc = proc
-        self._sub_con = JsonRpcDuplexConnection(DuplexStream(proc.stdout, proc.stdin))
-
-    def close(self) -> None:
-        self.proxy.close()
+        aio = DuplexStream(proc.stdout, proc.stdin)
+        self._sub_con = JsonRpcDuplexConnection(aio, 'leank')
 
     @staticmethod
     async def anew(lsp_cmd: list[str]) -> LeankSession:
@@ -37,13 +35,13 @@ class LeankSession:
 
     @property
     def proxy(self) -> RpcInterface:
-        return self._sub_con.remote
+        return self._sub_con.proxy
 
     def done_ok(self) -> bool:
         return self._proc.returncode == 0
 
     async def run(self, editor: RpcInterface) -> bool:
-        await self._sub_con.run(editor)
+        await self._sub_con.pump(editor)
         await self._proc.communicate()
         return self.done_ok()
 
@@ -71,18 +69,12 @@ class StandardizedLspServer(RpcInterface):
         else:
             return future_error(ErrorCodes.ServerNotInitialized)
 
-    def close(self) -> None:
-        if self._session is None:
-            self._editor.close()
-        else:
-            self._session.close()
-
 
 async def server_loop(stdio: DuplexStream, lsp_cmd: list[str]) -> int:
-    editor_con = JsonRpcDuplexConnection(stdio)
+    editor_con = JsonRpcDuplexConnection(stdio, 'stdio')
     async with TaskGroup() as tg:
-        server = StandardizedLspServer(lsp_cmd, editor_con.remote, tg)
-        t_serv = tg.create_task(editor_con.run(server))
+        server = StandardizedLspServer(lsp_cmd, editor_con.proxy, tg)
+        t_serv = tg.create_task(editor_con.pump(server))
     ok = t_serv.result() and server.sessions_done_ok()
     return 0 if ok else 1
 
