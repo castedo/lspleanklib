@@ -131,9 +131,6 @@ class IncommingResponses:
         self._todo: dict[int | str | None, Future[Response]] = {}
         self.next_id = 1
 
-    def __bool__(self) -> bool:
-        return bool(self._todo)
-
     def cancel_all(self) -> None:
         while self._todo:
             msg_id, expect = self._todo.popitem()
@@ -168,36 +165,62 @@ class RpcInterface(typing.Protocol):
 
 class RemoteRpcProxy(RpcInterface):
     def __init__(self, aout: MinimalWriter):
-        self.aout = aout
-        self.expecting = IncommingResponses()
+        self._aout = aout
+        self._expecting: IncommingResponses | None = IncommingResponses()
 
     async def notify(self, mc: MethodCall) -> None:
-        if self.aout.is_closing():
+        if self._aout.is_closing():
             warn('notify called on closed or closing RPC connection')
-        await self._write_jsonrpc(method=mc.method, params=mc.params)
+            return
+        await write_jsonrpc(self._aout, method=mc.method, params=mc.params)
 
     async def request(
         self, mc: MethodCall, fix_id: str | None = None
     ) -> Awaitable[Response]:
-        (msg_id, expect) = self.expecting.prepare(fix_id)
-        await self._write_jsonrpc(id=msg_id, method=mc.method, params=mc.params)
+        if self._expecting is None or self._aout.is_closing():
+            warn('request called on closed or closing RPC connection')
+            return future_error(ErrorCodes.InternalError)
+        (msg_id, expect) = self._expecting.prepare(fix_id)
+        await write_jsonrpc(self._aout, id=msg_id, method=mc.method, params=mc.params)
         return expect
 
+    def got_response(self, response: Response, msg_id: int | str | None) -> None:
+        if self._expecting is None:
+            warn('RemoteRpcProxy.got_response called after end_of_incomming_responses')
+        else:
+            self._expecting.got_response(response, msg_id)
 
-    async def response(
-        self, tbd: Awaitable[Response], msg_id: int | str | None
-    ) -> None:
-        try:
-            response = await tbd
-            if response.error is not None:
-                await self._write_jsonrpc(id=msg_id, error=response.error.as_lsp_obj())
-            else:
-                await self._write_jsonrpc(id=msg_id, result=response.result)
-        except asyncio.CancelledError as ex:
-            log.exception(ex)
+    def end_of_incomming_responses(self) -> None:
+        if self._expecting:
+            self._expecting.cancel_all()
+            log.info("orphaned incomming responses cancelled")
+        self._expecting = None
 
-    async def _write_jsonrpc(self, **kwargs: LspAny) -> None:
-        await write_jsonrpc(self.aout, **kwargs)
+
+async def await_send_response(
+    aout: MinimalWriter, tbd: Awaitable[Response], msg_id: int | str | None
+) -> None:
+    try:
+        response = await tbd
+        if response.error is not None:
+            error = response.error.as_lsp_obj()
+            await write_jsonrpc(aout, id=msg_id, error=error)
+        else:
+            await write_jsonrpc(aout, id=msg_id, result=response.result)
+    except asyncio.CancelledError as ex:
+        log.exception(ex)
+
+
+class RequestResponseHelper:
+    def __init__(self, aout: MinimalWriter, impl: RpcInterface, tg: asyncio.TaskGroup):
+        self._aout = aout
+        self._impl = impl
+        self._tg = tg
+
+    async def request(self, msg_id: int | str | None, mc: MethodCall) -> None:
+        fix_id = msg_id if isinstance(msg_id, str) else None
+        tbd_response = await self._impl.request(mc, fix_id)
+        self._tg.create_task(await_send_response(self._aout, tbd_response, msg_id))
 
 
 class JsonRpcDuplexConnection:
@@ -213,15 +236,21 @@ class JsonRpcDuplexConnection:
         """
         try:
             async with asyncio.TaskGroup() as tg:
+                helper = RequestResponseHelper(self._aio.aout, impl, tg)
                 try:
                     async for msg in self._stream_jsonrpc():
-                        await self._process_msg(msg, impl, tg)
+                        if isinstance(msg.payload, Response):
+                            self.proxy.got_response(msg.payload, msg.id)
+                        elif msg.id is None:
+                            await impl.notify(msg.payload)
+                        else:
+                            await helper.request(msg.id, msg.payload)
                     return True
                 except (ValueError, IOError) as ex:
                     log.exception(ex)
                     return False
                 finally:
-                    self.proxy.expecting.cancel_all()
+                    self.proxy.end_of_incomming_responses()
                     log.debug(f"{self.name} pump done reading responses")
         finally:
             self._aio.aout.close()
@@ -233,15 +262,3 @@ class JsonRpcDuplexConnection:
                 yield JsonRpcMsg(msg)
             except ValueError as ex:
                 log.exception(ex)
-
-    async def _process_msg(
-        self, msg: JsonRpcMsg, impl: RpcInterface, tg: asyncio.TaskGroup
-    ) -> None:
-        if isinstance(msg.payload, Response):
-            self.proxy.expecting.got_response(msg.payload, msg.id)
-        elif msg.id is None:
-            await impl.notify(msg.payload)
-        else:
-            fix_id = msg.id if isinstance(msg.id, str) else None
-            tbd_response = await impl.request(msg.payload, fix_id)
-            tg.create_task(self.proxy.response(tbd_response, msg.id))
