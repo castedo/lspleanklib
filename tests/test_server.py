@@ -191,7 +191,7 @@ async def test_empty_stdin_subproc() -> None:
         tloop = asyncio.create_task(server_loop(inner, factory))
         outer.aout.close()
         retcode = await tloop
-        assert retcode == 0
+        assert retcode != 0
 
 
 @skipif_no_pylsp
@@ -253,7 +253,7 @@ def test_sub_exec_dev_null():
         stdin=subprocess.DEVNULL,
         text=False,
         capture_output=True,
-        check=True,
     )
+    assert result.returncode != 0
     assert result.stdout == b""
     assert result.stderr == b""

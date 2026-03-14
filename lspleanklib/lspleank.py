@@ -73,7 +73,7 @@ class StandardizedLspServer(RpcInterface):
         self._session: LeankSession | None = None
 
     def sessions_done_ok(self) -> bool:
-        return self._session is None or self._session.done_ok()
+        return self._session is not None and self._session.done_ok()
 
     async def notify(self, mc: MethodCall) -> None:
         if self._session is not None:
