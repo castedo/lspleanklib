@@ -1,0 +1,4 @@
+name = "min_import"
+
+[[lean_lib]]
+name = "Min"

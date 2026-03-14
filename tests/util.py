@@ -1,8 +1,11 @@
 import asyncio, contextlib, os
-from typing import BinaryIO
+from asyncio import Future
+from pathlib import Path
+from typing import BinaryIO, Awaitable
 from concurrent.futures import ThreadPoolExecutor
 
 from lspleanklib.aio import DuplexStream, MinimalReader, ReadFilePump, WriterFileAdapter
+from lspleanklib.jsonrpc import LspAny, MethodCall, Response, RpcInterface
 
 
 async def asyncio_pipe_stream_reader(pipe: BinaryIO, loop) -> MinimalReader:
@@ -39,3 +42,33 @@ async def aio_xpipe():
         outer = DuplexStream(outer_reader, WriterFileAdapter(o_w, loop))
         inner = DuplexStream(inner_reader, WriterFileAdapter(i_w, loop))
         yield outer, inner
+
+
+def initialize_call(rootPath: Path) -> MethodCall:
+    rootUri = rootPath.as_uri()
+    return MethodCall("initialize", {
+      "workspaceFolders": [{"uri": rootUri, "name": rootPath.name}],
+      "clientInfo": {"name": "mock test client"},
+    })
+
+
+class MockClient(RpcInterface):
+    def __init__(self) -> None:
+        self.notifs: dict[str, Future[LspAny]] = {}
+
+    def future_notif(self, method: str) -> Future[LspAny]:
+        f = self.notifs.get(method)
+        if f is None:
+            f = asyncio.get_running_loop().create_future()
+            self.notifs[method] = f
+        return f
+
+    async def notify(self, mc: MethodCall) -> None:
+        f = self.notifs.pop(mc.method, None)
+        if f is not None:
+            f.set_result(mc.params)
+
+    async def request(self, mc: MethodCall, fix_id: str | None) -> Awaitable[Response]:
+        async def trivial() -> Response:
+            return Response(None)
+        return trivial()

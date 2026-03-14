@@ -23,6 +23,7 @@ MsgParams: TypeAlias = Sequence[LspAny] | Mapping[str, LspAny]
 class ErrorCodes(enum.IntEnum):
     UnknownErrorCode = -32001
     ServerNotInitialized = -32002
+    InvalidRequest = -32600
     InternalError = -32603
 
 
@@ -144,6 +145,9 @@ class IncommingResponses:
     def __init__(self) -> None:
         self._todo: dict[int | str | None, Future[Response]] = {}
         self.next_id = 1
+
+    def __bool__(self) -> bool:
+        return bool(self._todo)
 
     def cancel_all(self) -> None:
         while self._todo:
