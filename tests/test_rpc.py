@@ -19,7 +19,7 @@ class NotImplementedService(RpcInterface):
     async def notify(self, mc: MethodCall) -> None:
         raise NotImplementedError
 
-    async def request(self, mc: MethodCall, fix_id: str | None) -> Awaitable[Response]:
+    async def request(self, mc: MethodCall, fix_id: str | None = None) -> Awaitable[Response]:
         raise NotImplementedError
 
     def close(self) -> None:
@@ -29,7 +29,7 @@ class NullService(RpcInterface):
     async def notify(self, mc: MethodCall) -> None:
         pass
 
-    async def request(self, mc: MethodCall, fix_id: str | None) -> Awaitable[Response]:
+    async def request(self, mc: MethodCall, fix_id: str | None = None) -> Awaitable[Response]:
         async def trivial() -> Response:
             return Response(None)
         return trivial()

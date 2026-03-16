@@ -79,7 +79,9 @@ class StandardizedLspServer(RpcInterface):
         if self._session is not None:
             await self._session.proxy.notify(mc)
 
-    async def request(self, mc: MethodCall, fix_id: str | None) -> Awaitable[Response]:
+    async def request(
+        self, mc: MethodCall, fix_id: str | None = None
+    ) -> Awaitable[Response]:
         if self._session is None and mc.method == 'initialize':
             self._session = await self._factory.anew(Path.cwd())
             self._tg.create_task(self._session.run(self._editor))

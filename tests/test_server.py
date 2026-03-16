@@ -204,6 +204,7 @@ async def test_loop_pylsp():
         msg = await read_message(outer.ain)
         assert msg['id'] == 1
         assert msg['result']['serverInfo']['name'] == "pylsp"
+        await write_notify(outer.aout, "initialized", {})
         await write_request(outer.aout, "shutdown", None, 2)
         await write_notify(outer.aout, "exit", None)
         outer.aout.close()
@@ -241,6 +242,7 @@ async def test_sub_exec_pylsp(cmdline):
     msg = await read_message(proc.stdout)
     assert msg['id'] == 1
     assert msg['result']['serverInfo']['name'] == "pylsp"
+    await write_notify(proc.stdin, "initialized", {})
     await write_request(proc.stdin, "shutdown", None, 2)
     await write_notify(proc.stdin, "exit", None)
     await proc.communicate()

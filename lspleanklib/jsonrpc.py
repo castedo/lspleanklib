@@ -61,7 +61,7 @@ async def read_message(stream: MinimalReader) -> dict[str, Any] | None:
 @dataclass
 class MethodCall:
     method: str
-    params: MsgParams | None
+    params: MsgParams | None = None
 
     def to_lsp_obj(self) -> LspObject:
         return asdict(self)
@@ -177,7 +177,7 @@ class IncommingResponses:
 class RpcInterface(typing.Protocol):
     async def notify(self, mc: MethodCall) -> None: ...
     async def request(
-        self, mc: MethodCall, fix_id: str | None
+        self, mc: MethodCall, fix_id: str | None = None
     ) -> Awaitable[Response]: ...
 
 

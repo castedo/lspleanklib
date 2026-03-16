@@ -68,7 +68,7 @@ class MockClient(RpcInterface):
         if f is not None:
             f.set_result(mc.params)
 
-    async def request(self, mc: MethodCall, fix_id: str | None) -> Awaitable[Response]:
+    async def request(self, mc: MethodCall, fix_id: str | None = None) -> Awaitable[Response]:
         async def trivial() -> Response:
             return Response(None)
         return trivial()
