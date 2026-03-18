@@ -52,7 +52,7 @@ def initialize_call(rootPath: Path) -> MethodCall:
     })
 
 
-class MockClient(RpcInterface):
+class MockEditor(RpcInterface):
     def __init__(self) -> None:
         self.notifs: dict[str, Future[LspAny]] = {}
 

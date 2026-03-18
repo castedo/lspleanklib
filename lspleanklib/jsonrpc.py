@@ -1,5 +1,5 @@
 """
-JSON-RPC
+JSON-RPC for Language Server Protocol
 """
 
 from __future__ import annotations
@@ -24,7 +24,25 @@ class ErrorCodes(enum.IntEnum):
     UnknownErrorCode = -32001
     ServerNotInitialized = -32002
     InvalidRequest = -32600
+    MethodNotFound = -32601
+    InvalidParams = -32602
     InternalError = -32603
+    RequestFailed = -32803
+
+
+def get_str(lobj: LspAny, key: str) -> str:
+    got = lobj.get(key) if isinstance(lobj, Mapping) else None
+    return got if isinstance(got, str) else ''
+
+
+def get_seq(lobj: LspAny, key: str) -> Sequence[LspAny]:
+    got = lobj.get(key) if isinstance(lobj, Mapping) else None
+    return got if isinstance(got, Sequence) else []
+
+
+def get_obj(lobj: LspAny, key: str) -> Mapping[str, LspAny]:
+    got = lobj.get(key) if isinstance(lobj, Mapping) else None
+    return got if isinstance(got, Mapping) else {}
 
 
 async def write_message(stream: MinimalWriter, msg: Mapping[str, Any]) -> None:
@@ -188,7 +206,7 @@ class RemoteRpcProxy(RpcInterface):
 
     async def notify(self, mc: MethodCall) -> None:
         if self._aout.is_closing():
-            warn('notify called on closed or closing RPC connection')
+            log.info(f"notification '{mc.method}' on closed or closing RPC connection")
             return
         await write_jsonrpc(self._aout, JsonRpcMsg(mc))
 
@@ -221,7 +239,8 @@ async def await_send_response(
     try:
         response = await tbd
         await write_jsonrpc(aout, JsonRpcMsg(response, msg_id))
-    except asyncio.CancelledError as ex:
+    except (asyncio.CancelledError, ValueError) as ex:
+        # writing to closed aout stream raises ValueError
         log.exception(ex)
 
 

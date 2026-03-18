@@ -7,7 +7,10 @@ test:
     ruff check lspleanklib || true
     mypy --strict lspleanklib
     mypy tests --cache-dir tests/.mypy_cache
-    pytest -vv tests --timeout=2  # --log-cli-level=DEBUG
+    pytest -vv tests --timeout=2 \
+#      --durations=3 \
+#      -m 'not slow' \
+#      --log-cli-level=DEBUG \
 
 clean:
     rm -rf dist
