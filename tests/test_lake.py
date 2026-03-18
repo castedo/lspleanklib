@@ -59,6 +59,7 @@ async def test_sub_lake():
 
 
 MIN_IMPORT_CASE = CASES_DIR / 'min_import'
+ALT_IMPORT_CASE = CASES_DIR / 'alt_import'
 
 
 def didOpen_call(doc_path):
@@ -88,3 +89,30 @@ async def test_open_doc(rootPath):
             notif = await pending
             assert notif['uri'] == main_path.as_uri()
             assert notif['diagnostics'] == []
+
+
+@pytest.mark.slow
+async def test_workspace_symbol_search():
+    rootPath = CASES_DIR
+    with contextlib.chdir(rootPath):
+        editor = MockEditor()
+        async with server_session_init(editor, LAKE_CMD, rootPath) as rpc:
+            min_main_path = MIN_IMPORT_CASE / 'Main.lean'
+            alt_main_path = ALT_IMPORT_CASE / 'Main.lean'
+            await rpc.notify(didOpen_call(min_main_path))
+            await rpc.notify(didOpen_call(alt_main_path))
+
+            while True:
+                pending = editor.future_notif('textDocument/publishDiagnostics')
+                notif = await pending
+                if notif['uri'] == alt_main_path.as_uri():
+                    break
+
+            aw_response = await rpc.request(MC('workspace/symbol', {'query': 'foobarsical'}))
+            response = await aw_response
+            assert response.result is not None
+            assert len(response.result) == 2
+            assert response.result[0]['name'] == 'foobarsical'
+            assert response.result[0]['location']['uri'] == (MIN_IMPORT_CASE / 'Min.lean').as_uri()
+            assert response.result[1]['name'] == 'foobarsical'
+            assert response.result[1]['location']['uri'] == (ALT_IMPORT_CASE / 'Min.lean').as_uri()

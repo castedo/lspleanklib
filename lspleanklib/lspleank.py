@@ -5,7 +5,7 @@ Link LSP-enabled editors to Lake LSP servers
 from __future__ import annotations
 import argparse, asyncio, logging, os, sys, typing
 from asyncio import TaskGroup, subprocess
-from collections.abc import Awaitable, Iterator, Mapping
+from collections.abc import Awaitable, Iterator, Mapping, Sequence
 from pathlib import Path
 from warnings import warn
 
@@ -14,6 +14,7 @@ from .cli import AsyncMainLoopThread, split_cmd_line, version
 from .jsonrpc import (
     ErrorCodes,
     JsonRpcDuplexConnection,
+    LspAny,
     LspObject,
     MethodCall,
     Response,
@@ -240,6 +241,8 @@ class LeankManager:
                 aw_response = await s.request(MethodCall('shutdown'))
                 await aw_response
             return awaitable(Response(None))
+        elif mc.method == 'workspace/symbol':
+            return await self._workspace_symbol(mc)
         else:
             warn(f"Unexpected request '{mc.method}'")
             return future_error(ErrorCodes.MethodNotFound)
@@ -254,6 +257,19 @@ class LeankManager:
         await sess.initialize_response()
         await sess.initialized()
         return sess
+
+    async def _workspace_symbol(self, mc: MethodCall) -> Awaitable[Response]:
+        result: list[LspAny] = []
+        for s in self._sessions:
+            aw_response = await s.request(mc)
+            response = await aw_response
+            if response.error is not None:
+                return awaitable(response)
+            elif isinstance(response.result, Sequence):
+                result.extend(response.result)
+            else:
+                return future_error(ErrorCodes.RequestFailed)
+        return awaitable(Response(result))
 
 
 def workspace_folders(client_init_params: LspObject) -> Iterator[Path]:
