@@ -193,6 +193,7 @@ class IncommingResponses:
 
 
 class RpcInterface(typing.Protocol):
+    def close(self) -> None: ...
     async def notify(self, mc: MethodCall) -> None: ...
     async def request(
         self, mc: MethodCall, fix_id: str | None = None
@@ -203,6 +204,10 @@ class RemoteRpcProxy(RpcInterface):
     def __init__(self, aout: MinimalWriter):
         self._aout = aout
         self._expecting: IncommingResponses | None = IncommingResponses()
+
+    def close(self) -> None:
+        log.debug(f"closing {self.__class__.__name__}")
+        self._aout.close()
 
     async def notify(self, mc: MethodCall) -> None:
         if self._aout.is_closing():
@@ -283,6 +288,7 @@ class JsonRpcDuplexConnection:
                     log.exception(ex)
                     return False
                 finally:
+                    impl.close()
                     self.proxy.end_of_incomming_responses()
                     log.debug(f"{self.name} pump done reading responses")
         finally:

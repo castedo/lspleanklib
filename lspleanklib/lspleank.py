@@ -89,6 +89,9 @@ class LeankMultiClient(RpcInterface):
         self._editor = editor
         self._caps = {'textDocument': editor_caps.get('textDocument', {})}
 
+    def close(self) -> None:
+        self._editor.close()
+
     async def notify(self, mc: MethodCall) -> None:
         await self._editor.notify(mc)
 
@@ -142,6 +145,15 @@ class LeankSession:
     def done_ok(self) -> bool:
         s = self._initialized_server
         return s is not None and s.done_ok()
+
+    def close(self) -> None:
+        log.debug(f"closing {self.__class__.__name__}")
+        if self._initialized_server:
+            self._initialized_server.proxy.close()
+        elif self._new_server_task.done():
+            self._new_server_task.result().proxy.close()
+        else:
+            self._new_server_task.cancel("Leank session closed before server run")
 
     async def initialize_response(self) -> Response:
         return await self._initialize_task
@@ -219,6 +231,10 @@ class LeankManager:
     def done_ok(self) -> bool:
         return all(s.done_ok() for s in self._sessions)
 
+    def close(self) -> None:
+        for s in self._sessions:
+            s.close()
+
     async def notify(self, mc: MethodCall) -> None:
         if mc.method == 'initialized':
             warn("Got 'initialized' notification when already initialized")
@@ -293,6 +309,13 @@ class MultiLeankLspServer(RpcInterface):
 
     def sessions_done_ok(self) -> bool:
         return self._initialized is not None and self._initialized.done_ok()
+
+    def close(self) -> None:
+        log.debug(f"closing {self.__class__.__name__}")
+        if self._initializing:
+            self._initializing.close()
+        if self._initialized:
+            self._initialized.close()
 
     async def notify(self, mc: MethodCall) -> None:
         if self._initialized:

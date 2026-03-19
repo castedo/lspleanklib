@@ -34,7 +34,6 @@ async def server_session(editor_impl: RpcInterface, server_cmd: list[str]):
         con = JsonRpcDuplexConnection(outer, 'editor')
         client_pump_task = asyncio.create_task(con.pump(editor_impl))
         yield con.proxy
-        outer.aout.close()
         assert await server_loop_task == 0
         assert await client_pump_task == True
 
@@ -49,6 +48,7 @@ async def server_session_init(client: RpcInterface, server_cmd: list[str], root:
         aw_resp = await rpc.request(MC('shutdown'))
         assert await aw_resp == Response(None)
         await rpc.notify(MC('exit'))
+        rpc.close()
 
 
 async def test_sub_lake():

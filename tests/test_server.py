@@ -213,6 +213,51 @@ async def test_loop_pylsp():
         assert retcode == 0
 
 
+@skipif_no_pylsp
+@pytest.mark.slow
+async def test_aborted_initialization():
+    async with aio_xpipe() as (outer, inner):
+        factory = LeankSubprocessFactory(["pylsp"])
+        tloop = asyncio.create_task(server_loop(inner, factory))
+        outer.aout.write(INIT_BYTES)
+        await outer.aout.drain()
+        await read_message(outer.ain)
+        outer.aout.close()
+        retcode = await tloop
+        assert retcode == 1
+
+
+@skipif_no_pylsp
+@pytest.mark.slow
+async def test_eof_without_shutdown():
+    async with aio_xpipe() as (outer, inner):
+        factory = LeankSubprocessFactory(["pylsp"])
+        tloop = asyncio.create_task(server_loop(inner, factory))
+        outer.aout.write(INIT_BYTES)
+        await outer.aout.drain()
+        await read_message(outer.ain)
+        await write_notify(outer.aout, "initialized", {})
+        outer.aout.close()
+        retcode = await tloop
+        assert retcode == 0
+
+
+@skipif_no_pylsp
+@pytest.mark.slow
+async def test_eof_without_exit():
+    async with aio_xpipe() as (outer, inner):
+        factory = LeankSubprocessFactory(["pylsp"])
+        tloop = asyncio.create_task(server_loop(inner, factory))
+        outer.aout.write(INIT_BYTES)
+        await outer.aout.drain()
+        await read_message(outer.ain)
+        await write_notify(outer.aout, "initialized", {})
+        await write_request(outer.aout, "shutdown", None, 2)
+        outer.aout.close()
+        retcode = await tloop
+        assert retcode == 0
+
+
 async def test_bogus_stdin(caplog, capsys) -> None:
     caplog.set_level(logging.CRITICAL)
     async with aio_xpipe() as (outer, inner):

@@ -21,7 +21,7 @@ class AsyncMainLoopThread(threading.Thread):
 
 def version() -> str:
     try:
-        from ._version import version  # type: ignore[import-not-found]
+        from ._version import version  # type: ignore[import-not-found, import-untyped, unused-ignore]
 
         return str(version)
     except ImportError:
