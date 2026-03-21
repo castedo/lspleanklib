@@ -19,7 +19,7 @@ from lspleanklib.jsonrpc import (
     write_jsonrpc,
     write_message,
 )
-from lspleanklib.lspleank import LeankSubprocessFactory, server_loop
+from lspleanklib.lspleank import LeankSubprocessFactory, MultiLeankLspService
 
 from util import aio_xpipe, pipe_stream_reader
 
@@ -31,6 +31,12 @@ skipif_no_pylsp = pytest.mark.skipif(
 TESTS_DIR = Path(__file__).parent
 TEST_CASES = TESTS_DIR / "cases"
 INIT_BYTES = (TEST_CASES / "vim9-lsp-init.txt").read_bytes()
+
+
+async def server_loop(stdio: DuplexStream, cmd_line) -> int:
+    factory = LeankSubprocessFactory(cmd_line)
+    service = MultiLeankLspService(factory)
+    return await service.amain(stdio)
 
 
 async def write_notify(aout, method, params) -> None:
@@ -55,7 +61,7 @@ async def a_pipe():
             yield DuplexStream(reader, writer)
 
 
-async def msg_loop(super_io: DuplexStream, sub_io: DuplexStream) -> bool:
+async def msg_loop(super_io: DuplexStream, sub_io: DuplexStream) -> None:
     super_con = JsonRpcDuplexChannel(super_io, 'super')
     sub_con = JsonRpcDuplexChannel(sub_io, 'sub')
     async with asyncio.TaskGroup() as tg:
@@ -63,7 +69,6 @@ async def msg_loop(super_io: DuplexStream, sub_io: DuplexStream) -> bool:
         super_con.handle(sub_con.proxy)
         t_super = tg.create_task(sub_con.pump())
         t_sub = tg.create_task(super_con.pump())
-    return t_super.result() and t_sub.result()
 
 
 @pytest.fixture
@@ -95,7 +100,7 @@ async def test_empty_stdin(msg_loop_trio):
     (outer, inner, taloop) = msg_loop_trio
     outer.aout.close()
     inner.aout.close()
-    assert await taloop == True
+    await taloop
 
 
 async def assert_echo(aout: MinimalWriter, ain: MinimalReader, msg: LspObject) -> None:
@@ -142,7 +147,7 @@ async def test_register_lean_watcher(msg_loop_trio):
     })
     outer.aout.close()
     inner.aout.close()
-    assert await taloop == True
+    await taloop
 
 
 async def test_definition(msg_loop_trio, capsys):
@@ -181,7 +186,7 @@ async def test_definition(msg_loop_trio, capsys):
     })
     outer.aout.close()
     inner.aout.close()
-    assert await taloop == True
+    await taloop
     captured = capsys.readouterr()
     assert captured.out == ""
     assert captured.err == ""
@@ -189,8 +194,7 @@ async def test_definition(msg_loop_trio, capsys):
 
 async def test_empty_stdin_subproc() -> None:
     async with aio_xpipe() as (outer, inner):
-        factory = LeankSubprocessFactory(["cat"])
-        tloop = asyncio.create_task(server_loop(inner, factory))
+        tloop = asyncio.create_task(server_loop(inner, ["cat"]))
         outer.aout.close()
         retcode = await tloop
         assert retcode != 0
@@ -200,8 +204,7 @@ async def test_empty_stdin_subproc() -> None:
 @pytest.mark.slow
 async def test_loop_pylsp():
     async with aio_xpipe() as (outer, inner):
-        factory = LeankSubprocessFactory(["pylsp"])
-        tloop = asyncio.create_task(server_loop(inner, factory))
+        tloop = asyncio.create_task(server_loop(inner, ["pylsp"]))
         outer.aout.write(INIT_BYTES)
         await outer.aout.drain()
         msg = await read_message(outer.ain)
@@ -219,8 +222,7 @@ async def test_loop_pylsp():
 @pytest.mark.slow
 async def test_aborted_initialization():
     async with aio_xpipe() as (outer, inner):
-        factory = LeankSubprocessFactory(["pylsp"])
-        tloop = asyncio.create_task(server_loop(inner, factory))
+        tloop = asyncio.create_task(server_loop(inner, ["pylsp"]))
         outer.aout.write(INIT_BYTES)
         await outer.aout.drain()
         await read_message(outer.ain)
@@ -233,8 +235,7 @@ async def test_aborted_initialization():
 @pytest.mark.slow
 async def test_eof_without_shutdown():
     async with aio_xpipe() as (outer, inner):
-        factory = LeankSubprocessFactory(["pylsp"])
-        tloop = asyncio.create_task(server_loop(inner, factory))
+        tloop = asyncio.create_task(server_loop(inner, ["pylsp"]))
         outer.aout.write(INIT_BYTES)
         await outer.aout.drain()
         await read_message(outer.ain)
@@ -248,8 +249,7 @@ async def test_eof_without_shutdown():
 @pytest.mark.slow
 async def test_eof_without_exit():
     async with aio_xpipe() as (outer, inner):
-        factory = LeankSubprocessFactory(["pylsp"])
-        tloop = asyncio.create_task(server_loop(inner, factory))
+        tloop = asyncio.create_task(server_loop(inner, ["pylsp"]))
         outer.aout.write(INIT_BYTES)
         await outer.aout.drain()
         await read_message(outer.ain)
@@ -263,8 +263,7 @@ async def test_eof_without_exit():
 async def test_bogus_stdin(caplog, capsys) -> None:
     caplog.set_level(logging.CRITICAL)
     async with aio_xpipe() as (outer, inner):
-        factory = LeankSubprocessFactory(["cat"])
-        tloop = asyncio.create_task(server_loop(inner, factory))
+        tloop = asyncio.create_task(server_loop(inner, ["cat"]))
         outer.aout.write(b"BOGUS")
         await outer.aout.drain()
         outer.aout.close()
@@ -308,4 +307,4 @@ def test_sub_exec_dev_null():
     )
     assert result.returncode != 0
     assert result.stdout == b""
-    assert result.stderr == b""
+    assert len(result.stderr)

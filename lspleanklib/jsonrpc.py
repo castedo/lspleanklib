@@ -11,13 +11,7 @@ from typing import Any, TypeAlias
 from warnings import warn
 
 from .aio import DuplexStream, MinimalReader, MinimalWriter
-from .util import log
-
-
-# Types from Language Server Protocol Specification
-LspAny: TypeAlias = None | str | int | Sequence['LspAny'] | Mapping[str, 'LspAny']
-LspObject: TypeAlias = Mapping[str, LspAny]
-MsgParams: TypeAlias = Sequence[LspAny] | Mapping[str, LspAny]
+from .util import LspAny, LspObject, log
 
 
 class ErrorCodes(enum.IntEnum):
@@ -28,21 +22,6 @@ class ErrorCodes(enum.IntEnum):
     InvalidParams = -32602
     InternalError = -32603
     RequestFailed = -32803
-
-
-def get_str(lobj: LspAny, key: str) -> str:
-    got = lobj.get(key) if isinstance(lobj, Mapping) else None
-    return got if isinstance(got, str) else ''
-
-
-def get_seq(lobj: LspAny, key: str) -> Sequence[LspAny]:
-    got = lobj.get(key) if isinstance(lobj, Mapping) else None
-    return got if isinstance(got, Sequence) else []
-
-
-def get_obj(lobj: LspAny, key: str) -> Mapping[str, LspAny]:
-    got = lobj.get(key) if isinstance(lobj, Mapping) else None
-    return got if isinstance(got, Mapping) else {}
 
 
 async def write_message(stream: MinimalWriter, msg: Mapping[str, Any]) -> None:
@@ -74,6 +53,9 @@ async def read_message(stream: MinimalReader) -> dict[str, Any] | None:
         if ex.partial:
             raise ValueError("truncated stream input") from ex
         return None
+
+
+MsgParams: TypeAlias = Sequence[LspAny] | Mapping[str, LspAny]
 
 
 @dataclass
@@ -242,7 +224,7 @@ class RpcDuplexChannel(typing.Protocol):
     @property
     def proxy(self) -> RpcInterface: ...
 
-    async def pump(self) -> bool: ...
+    async def pump(self) -> None: ...
 
     def handle(self, impl: RpcInterface) -> None: ...
 
@@ -272,7 +254,7 @@ class JsonRpcDuplexChannel(RpcDuplexChannel):
     def handle(self, impl: RpcInterface) -> None:
         self._impl = impl
 
-    async def pump(self) -> bool:
+    async def pump(self) -> None:
         """Listen for JSONRPC message on stream input until stream EOF.
 
         impl: implements the methods for RPC calls received on stream input
@@ -286,12 +268,11 @@ class JsonRpcDuplexChannel(RpcDuplexChannel):
                         elif msg.id is None:
                             if self._impl:
                                 await self._impl.notify(msg.payload)
+                            else:
+                                err = "No handler for '{}' notification in {} pump"
+                                warn(err.format(msg.payload.method, self.name))
                         else:
                             await self._request(msg.id, msg.payload, response_tasks)
-                    return True
-                except (ValueError, IOError) as ex:
-                    log.exception(ex)
-                    return False
                 finally:
                     if self._impl is not None:
                         self._impl.close()
@@ -316,4 +297,6 @@ class JsonRpcDuplexChannel(RpcDuplexChannel):
             tbd_response = await self._impl.request(mc, fix_id)
         else:
             tbd_response = future_error(ErrorCodes.MethodNotFound)
+            err = "No handler for '{}' request in {} pump"
+            warn(err.format(mc.method, self.name))
         tg.create_task(await_send_response(self._aio.aout, tbd_response, msg_id))

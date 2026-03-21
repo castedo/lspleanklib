@@ -9,22 +9,31 @@ from collections.abc import Awaitable, Iterator, Mapping, Sequence
 from pathlib import Path
 from warnings import warn
 
-from .aio import DuplexStream, ReadFilePump, WriterFileAdapter
-from .cli import AsyncMainLoopThread, split_cmd_line, version
+from .aio import DuplexStream
+from .cli import split_cmd_line, version
 from .jsonrpc import (
     ErrorCodes,
     JsonRpcDuplexChannel,
-    LspAny,
-    LspObject,
     MethodCall,
     Response,
     RpcInterface,
     future_error,
+)
+from .server import (
+    LspServer,
+    LspService,
+    async_stdio_main,
+)
+from .util import (
+    LspAny,
+    LspObject,
+    Path_from_uri,
+    awaitable,
     get_obj,
     get_seq,
     get_str,
+    log,
 )
-from .util import Path_from_uri, awaitable, log
 
 
 LSP_SERVER_NAME = "lspleank"
@@ -298,7 +307,7 @@ def workspace_folders(client_init_params: LspObject) -> Iterator[Path]:
             log.exception(ex)
 
 
-class MultiLeankLspServer(RpcInterface):
+class MultiLeankLspServer(LspServer):
     def __init__(
         self, editor: RpcInterface, factory: LeankServerFactory, tg: TaskGroup
     ):
@@ -308,8 +317,8 @@ class MultiLeankLspServer(RpcInterface):
         self._initializing: LeankSession | None = None
         self._initialized: LeankManager | None = None
 
-    def sessions_done_ok(self) -> bool:
-        return self._initialized is not None and self._initialized.done_ok()
+    def is_initialized(self) -> bool:
+        return self._initialized is not None
 
     def close(self) -> None:
         log.debug(f"closing {self.__class__.__name__}")
@@ -357,47 +366,30 @@ class MultiLeankLspServer(RpcInterface):
         return adapt_init_response(response)
 
 
-async def server_loop(stdio: DuplexStream, factory: LeankServerFactory) -> int:
-    editor_con = JsonRpcDuplexChannel(stdio, 'stdio')
-    async with TaskGroup() as tg:
-        server = MultiLeankLspServer(editor_con.proxy, factory, tg)
-        editor_con.handle(server)
-        t_serv = tg.create_task(editor_con.pump())
-    ok = t_serv.result() and server.sessions_done_ok()
-    log.debug(f"Server loop done ok={ok}")
-    return 0 if ok else 1
+class MultiLeankLspService(LspService):
+    def __init__(self, factory: LeankServerFactory):
+        self._factory = factory
 
-
-def get_extern_cmd(cmd_line_args: list[str]) -> list[str]:
-    cli = argparse.ArgumentParser(prog='lspleank', description=__doc__)
-    cli.add_argument('--version', action='version', version=version())
-    cli.add_argument('command', choices=['stdio'])
-    (args, extra) = split_cmd_line(cmd_line_args, ['lake', 'serve'])
-    cli.parse_args(args)
-    return extra
+    def start(self, client: RpcInterface, tg: TaskGroup) -> LspServer:
+        return MultiLeankLspServer(client, self._factory, tg)
 
 
 def main(cmd_line_args: list[str] | None = None) -> int:
-    logging.basicConfig()
-    logging.captureWarnings(True)
     if cmd_line_args is None:
         cmd_line_args = sys.argv[1:]
-    extern_cmd = get_extern_cmd(cmd_line_args)
-    loop = asyncio.new_event_loop()
-    pump = ReadFilePump(sys.stdin.fileno(), loop)
-    stdio = DuplexStream(pump.stream, WriterFileAdapter(sys.stdout.buffer, loop))
-    factory = LeankSubprocessFactory(extern_cmd)
-    amain_thread = AsyncMainLoopThread(loop, server_loop(stdio, factory))
-    amain_thread.start()
-    pump.run()
-    try:
-        amain_thread.join()
-    except KeyboardInterrupt as ex:
-        log.exception(ex)
-    if amain_thread.retcode is None:
-        log.debug('Async main loop thread did not complete properly')
-        return 1
-    return amain_thread.retcode
+    (cmd_line_args, extra_args) = split_cmd_line(cmd_line_args)
+
+    logging.basicConfig()
+    logging.captureWarnings(True)
+
+    cli = argparse.ArgumentParser(prog='lspleank', description=__doc__)
+    cli.add_argument('--version', action='version', version=version())
+    cli.add_argument('command', choices=['stdio'])
+    cli.parse_args(cmd_line_args)
+
+    factory = LeankSubprocessFactory(extra_args)
+    service = MultiLeankLspService(factory)
+    return async_stdio_main(service.amain)
 
 
 if __name__ == '__main__':

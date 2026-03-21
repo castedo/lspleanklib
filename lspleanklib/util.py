@@ -1,6 +1,7 @@
 import logging
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import TypeVar
+from typing import TypeAlias, TypeVar
 
 T = TypeVar('T')
 
@@ -26,3 +27,28 @@ def Path_from_uri(uri: str) -> Path:
         if not path.is_absolute():
             raise ValueError(f"URI is not absolute: {uri!r}")
         return path
+
+
+# Useful general types from Language Server Protocol Specification
+LspAny: TypeAlias = None | str | int | Sequence['LspAny'] | Mapping[str, 'LspAny']
+LspObject: TypeAlias = Mapping[str, LspAny]
+
+
+def get_str(lobj: LspAny, key: str) -> str:
+    got = lobj.get(key) if isinstance(lobj, Mapping) else None
+    return got if isinstance(got, str) else ''
+
+
+def get_seq(lobj: LspAny, key: str) -> Sequence[LspAny]:
+    got = lobj.get(key) if isinstance(lobj, Mapping) else None
+    return got if isinstance(got, Sequence) else []
+
+
+def get_obj(lobj: LspAny, key: str) -> Mapping[str, LspAny]:
+    got = lobj.get(key) if isinstance(lobj, Mapping) else None
+    return got if isinstance(got, Mapping) else {}
+
+
+def get_uri_path(lobj: LspAny, key: str) -> Path:
+    uri = get_str(lobj, key)
+    return Path.cwd() if not uri else Path_from_uri(uri)

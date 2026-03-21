@@ -38,7 +38,6 @@ async def test_response() -> None:
             await write_message(remote.aout, {"jsonrpc":"2.0", "id": 1, "result": "nothing"})
             assert await tbd == Response("nothing")
             remote.aout.close()
-    assert ta.result() == True
 
 
 async def test_response_cancelled() -> None:
@@ -57,7 +56,6 @@ async def test_response_cancelled() -> None:
             except asyncio.CancelledError:
                 cancelled = True
             assert cancelled == True
-    assert ta.result() == True
 
 
 async def test_simple_serve() -> None:
@@ -70,4 +68,3 @@ async def test_simple_serve() -> None:
             msg = await read_message(remote.ain)
             assert msg == {"jsonrpc":"2.0", "id": 1, "result": None}
             remote.aout.close()
-    assert ta.result() == True

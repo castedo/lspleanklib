@@ -5,7 +5,8 @@ from typing import BinaryIO, Awaitable
 from concurrent.futures import ThreadPoolExecutor
 
 from lspleanklib.aio import DuplexStream, MinimalReader, ReadFilePump, WriterFileAdapter
-from lspleanklib.jsonrpc import LspAny, MethodCall, Response, RpcInterface
+from lspleanklib.jsonrpc import JsonRpcDuplexChannel, MethodCall, Response, RpcInterface
+from lspleanklib.util import LspAny
 
 
 async def asyncio_pipe_stream_reader(pipe: BinaryIO, loop) -> MinimalReader:
@@ -13,7 +14,6 @@ async def asyncio_pipe_stream_reader(pipe: BinaryIO, loop) -> MinimalReader:
     protocol = asyncio.StreamReaderProtocol(ret)
     await loop.connect_read_pipe(lambda: protocol, pipe)
     return ret
-
 
 async def pump_pipe_stream_reader(pipe: BinaryIO, loop) -> MinimalReader:
     pump = ReadFilePump(pipe.fileno(), loop)
@@ -42,6 +42,13 @@ async def aio_xpipe():
         outer = DuplexStream(outer_reader, WriterFileAdapter(o_w, loop))
         inner = DuplexStream(inner_reader, WriterFileAdapter(i_w, loop))
         yield outer, inner
+
+@contextlib.asynccontextmanager
+async def jsonrpc_xpipe():
+    async with aio_xpipe() as (outer, inner):
+        outer_chan = JsonRpcDuplexChannel(outer, 'outer')
+        inner_chan = JsonRpcDuplexChannel(inner, 'inner')
+        yield (outer_chan, inner_chan)
 
 
 def initialize_call(rootPath: Path) -> MethodCall:
