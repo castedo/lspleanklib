@@ -13,7 +13,7 @@ from .aio import DuplexStream, ReadFilePump, WriterFileAdapter
 from .cli import AsyncMainLoopThread, split_cmd_line, version
 from .jsonrpc import (
     ErrorCodes,
-    JsonRpcDuplexConnection,
+    JsonRpcDuplexChannel,
     LspAny,
     LspObject,
     MethodCall,
@@ -58,7 +58,7 @@ class LeankSubprocess(LeankServer):
         assert proc.stdin and proc.stdout
         self._proc = proc
         aio = DuplexStream(proc.stdout, proc.stdin)
-        self._sub_con = JsonRpcDuplexConnection(aio, 'leank')
+        self._sub_con = JsonRpcDuplexChannel(aio, 'leank')
 
     @property
     def proxy(self) -> RpcInterface:
@@ -69,7 +69,8 @@ class LeankSubprocess(LeankServer):
 
     async def run(self, client: RpcInterface) -> None:
         log.debug(f"Subprocess {self._proc.pid} for {self._work_root}")
-        await self._sub_con.pump(client)
+        self._sub_con.handle(client)
+        await self._sub_con.pump()
         await self._proc.communicate()
 
 
@@ -357,10 +358,11 @@ class MultiLeankLspServer(RpcInterface):
 
 
 async def server_loop(stdio: DuplexStream, factory: LeankServerFactory) -> int:
-    editor_con = JsonRpcDuplexConnection(stdio, 'stdio')
+    editor_con = JsonRpcDuplexChannel(stdio, 'stdio')
     async with TaskGroup() as tg:
         server = MultiLeankLspServer(editor_con.proxy, factory, tg)
-        t_serv = tg.create_task(editor_con.pump(server))
+        editor_con.handle(server)
+        t_serv = tg.create_task(editor_con.pump())
     ok = t_serv.result() and server.sessions_done_ok()
     log.debug(f"Server loop done ok={ok}")
     return 0 if ok else 1
@@ -396,3 +398,7 @@ def main(cmd_line_args: list[str] | None = None) -> int:
         log.debug('Async main loop thread did not complete properly')
         return 1
     return amain_thread.retcode
+
+
+if __name__ == '__main__':
+    exit(main())

@@ -11,7 +11,7 @@ from lspleanklib.aio import (
     WriterFileAdapter,
 )
 from lspleanklib.jsonrpc import (
-    JsonRpcDuplexConnection,
+    JsonRpcDuplexChannel,
     JsonRpcMsg,
     LspObject,
     MethodCall,
@@ -56,11 +56,13 @@ async def a_pipe():
 
 
 async def msg_loop(super_io: DuplexStream, sub_io: DuplexStream) -> bool:
-    super_con = JsonRpcDuplexConnection(super_io, 'super')
-    sub_con = JsonRpcDuplexConnection(sub_io, 'sub')
+    super_con = JsonRpcDuplexChannel(super_io, 'super')
+    sub_con = JsonRpcDuplexChannel(sub_io, 'sub')
     async with asyncio.TaskGroup() as tg:
-        t_super = tg.create_task(sub_con.pump(super_con.proxy))
-        t_sub = tg.create_task(super_con.pump(sub_con.proxy))
+        sub_con.handle(super_con.proxy)
+        super_con.handle(sub_con.proxy)
+        t_super = tg.create_task(sub_con.pump())
+        t_sub = tg.create_task(super_con.pump())
     return t_super.result() and t_sub.result()
 
 

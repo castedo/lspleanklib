@@ -5,7 +5,7 @@ from pathlib import Path
 
 from lspleanklib.lspleank import LeankSubprocessFactory, server_loop
 from lspleanklib.jsonrpc import (
-    JsonRpcDuplexConnection,
+    JsonRpcDuplexChannel,
     MethodCall as MC,
     Response,
     RpcInterface,
@@ -31,8 +31,9 @@ async def server_session(editor_impl: RpcInterface, server_cmd: list[str]):
     async with aio_xpipe() as (outer, inner):
         factory = LeankSubprocessFactory(server_cmd)
         server_loop_task = asyncio.create_task(server_loop(inner, factory))
-        con = JsonRpcDuplexConnection(outer, 'editor')
-        client_pump_task = asyncio.create_task(con.pump(editor_impl))
+        con = JsonRpcDuplexChannel(outer, 'editor')
+        con.handle(editor_impl)
+        client_pump_task = asyncio.create_task(con.pump())
         yield con.proxy
         assert await server_loop_task == 0
         assert await client_pump_task == True
