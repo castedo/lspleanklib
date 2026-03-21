@@ -19,7 +19,7 @@ from lspleanklib.jsonrpc import (
     write_jsonrpc,
     write_message,
 )
-from lspleanklib.lspleank import LeankSubprocessFactory, MultiLeankLspService
+from lspleanklib.lspleank import RpcSubprocessFactory, MultiLeankLspService
 
 from util import aio_xpipe, pipe_stream_reader
 
@@ -34,7 +34,7 @@ INIT_BYTES = (TEST_CASES / "vim9-lsp-init.txt").read_bytes()
 
 
 async def server_loop(stdio: DuplexStream, cmd_line) -> int:
-    factory = LeankSubprocessFactory(cmd_line)
+    factory = RpcSubprocessFactory(cmd_line)
     service = MultiLeankLspService(factory)
     return await service.amain(stdio)
 
@@ -67,8 +67,8 @@ async def msg_loop(super_io: DuplexStream, sub_io: DuplexStream) -> None:
     async with asyncio.TaskGroup() as tg:
         sub_con.handle(super_con.proxy)
         super_con.handle(sub_con.proxy)
-        t_super = tg.create_task(sub_con.pump())
-        t_sub = tg.create_task(super_con.pump())
+        tg.create_task(sub_con.pump())
+        tg.create_task(super_con.pump())
 
 
 @pytest.fixture

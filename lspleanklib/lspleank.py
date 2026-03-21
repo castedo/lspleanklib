@@ -3,25 +3,26 @@ Link LSP-enabled editors to Lake LSP servers
 """
 
 from __future__ import annotations
-import argparse, asyncio, logging, os, sys, typing
-from asyncio import TaskGroup, subprocess
+import argparse, logging, os, sys
+from asyncio import Future, TaskGroup
 from collections.abc import Awaitable, Iterator, Mapping, Sequence
 from pathlib import Path
 from warnings import warn
 
-from .aio import DuplexStream
 from .cli import split_cmd_line, version
 from .jsonrpc import (
     ErrorCodes,
-    JsonRpcDuplexChannel,
     MethodCall,
     Response,
+    RpcDuplexChannel,
     RpcInterface,
     future_error,
 )
 from .server import (
     LspServer,
     LspService,
+    RpcSubprocessFactory,
+    LocalChannelFactory,
     async_stdio_main,
 )
 from .util import (
@@ -46,52 +47,6 @@ LAKE_WORKSPACE_MARKER = {
     "lean-toolchain",
     ".lspleank.sock",
 }
-
-
-class LeankServer(typing.Protocol):
-    @property
-    def proxy(self) -> RpcInterface: ...
-
-    async def run(self, leank_client: RpcInterface) -> None: ...
-
-    def done_ok(self) -> bool: ...
-
-
-class LeankServerFactory(typing.Protocol):
-    async def anew(self, root_dir: Path) -> LeankServer: ...
-
-
-class LeankSubprocess(LeankServer):
-    def __init__(self, work_root: Path, proc: subprocess.Process):
-        self._work_root = work_root
-        assert proc.stdin and proc.stdout
-        self._proc = proc
-        aio = DuplexStream(proc.stdout, proc.stdin)
-        self._sub_con = JsonRpcDuplexChannel(aio, 'leank')
-
-    @property
-    def proxy(self) -> RpcInterface:
-        return self._sub_con.proxy
-
-    def done_ok(self) -> bool:
-        return self._proc.returncode == 0
-
-    async def run(self, client: RpcInterface) -> None:
-        log.debug(f"Subprocess {self._proc.pid} for {self._work_root}")
-        self._sub_con.handle(client)
-        await self._sub_con.pump()
-        await self._proc.communicate()
-
-
-class LeankSubprocessFactory(LeankServerFactory):
-    def __init__(self, lsp_cmd: list[str]):
-        self._lsp_cmd = lsp_cmd
-
-    async def anew(self, work_root: Path) -> LeankServer:
-        proc = await asyncio.create_subprocess_exec(
-            *self._lsp_cmd, cwd=work_root, stdin=subprocess.PIPE, stdout=subprocess.PIPE
-        )
-        return LeankSubprocess(work_root, proc)
 
 
 class LeankMultiClient(RpcInterface):
@@ -127,22 +82,22 @@ class LeankSession:
         self,
         client: LeankMultiClient,
         work_root: Path,
-        factory: LeankServerFactory,
+        future_channel: Future[RpcDuplexChannel],
         tg: TaskGroup,
     ):
         self.client = client
         self.work_root = work_root
-        self._new_server_task = tg.create_task(factory.anew(work_root))
-        self._run_server_task = tg.create_task(self._run_server())
+        self._future_channel = future_channel
         self._initialize_task = tg.create_task(self._initialize())
-        self._initialized_server: LeankServer | None = None
+        self._initialized_server: RpcDuplexChannel | None = None
 
-    async def _run_server(self) -> None:
-        server = await self._new_server_task
-        await server.run(self.client)
+    async def pump(self) -> None:
+        channel = await self._future_channel
+        channel.handle(self.client)
+        await channel.pump()
 
     async def _initialize(self) -> Response:
-        server = await self._new_server_task
+        server = await self._future_channel
         init_call = self.client.init_call(self.work_root)
         aw_response = await server.proxy.request(init_call)
         response = await aw_response
@@ -152,24 +107,20 @@ class LeankSession:
             log.debug(f"Server initialize response for workspace '{self.work_root}'")
         return response
 
-    def done_ok(self) -> bool:
-        s = self._initialized_server
-        return s is not None and s.done_ok()
-
     def close(self) -> None:
         log.debug(f"closing {self.__class__.__name__}")
         if self._initialized_server:
             self._initialized_server.proxy.close()
-        elif self._new_server_task.done():
-            self._new_server_task.result().proxy.close()
+        elif self._future_channel.done():
+            self._future_channel.result().proxy.close()
         else:
-            self._new_server_task.cancel("Leank session closed before server run")
+            self._future_channel.cancel("Leank session closed before server run")
 
     async def initialize_response(self) -> Response:
         return await self._initialize_task
 
     async def initialized(self) -> None:
-        self._initialized_server = await self._new_server_task
+        self._initialized_server = await self._future_channel
         await self._initialized_server.proxy.notify(MethodCall('initialized'))
         log.debug(f"Server initialized for workspace '{self.work_root}'")
 
@@ -187,12 +138,15 @@ class LeankSession:
 
 
 class LeankSessionFactory:
-    def __init__(self, factory: LeankServerFactory, tg: TaskGroup):
+    def __init__(self, factory: LocalChannelFactory, tg: TaskGroup):
         self._factory = factory
         self._tg = tg
 
     def new(self, client: LeankMultiClient, work_root: Path) -> LeankSession:
-        return LeankSession(client, work_root, self._factory, self._tg)
+        future_channel = self._tg.create_task(self._factory.anew(work_root))
+        sess = LeankSession(client, work_root, future_channel, self._tg)
+        self._tg.create_task(sess.pump())
+        return sess
 
 
 def adapt_init_response(lakish_server_init_result: Response) -> Response:
@@ -238,27 +192,23 @@ class LeankManager:
         self._sessions = [init_session]
         self._factory = factory
 
-    def done_ok(self) -> bool:
-        return all(s.done_ok() for s in self._sessions)
-
     def close(self) -> None:
         for s in self._sessions:
             s.close()
 
     async def notify(self, mc: MethodCall) -> None:
-        if mc.method == 'initialized':
-            warn("Got 'initialized' notification when already initialized")
+        if doc_path := document_method(mc):
+            sess = await self._get_session(doc_path)
+            await sess.notify(mc)
         else:
-            if doc_path := document_method(mc):
-                sess = await self._get_session(doc_path)
-                await sess.notify(mc)
-            else:
-                if mc.method not in {"exit"}:
-                    warn(f"Unexpected notification '{mc.method}'")
-                for s in self._sessions:
-                    await s.notify(mc)
+            if mc.method not in {"exit"}:
+                warn(f"Unexpected notification '{mc.method}'")
+            for s in self._sessions:
+                await s.notify(mc)
 
-    async def request(self, mc: MethodCall, fix_id: str | None) -> Awaitable[Response]:
+    async def request(
+        self, mc: MethodCall, fix_id: str | None = None
+    ) -> Awaitable[Response]:
         if doc_path := document_method(mc):
             sess = await self._get_session(doc_path)
             return await sess.request(mc, fix_id)
@@ -273,7 +223,7 @@ class LeankManager:
             warn(f"Unexpected request '{mc.method}'")
             return future_error(ErrorCodes.MethodNotFound)
 
-    async def _get_session(self, doc_path: Path) -> LeankSession:
+    async def _get_session(self, doc_path: Path) -> RpcInterface:
         lake_dir = pick_workspace_dir(doc_path)
         for s in self._sessions:
             if s.work_root == lake_dir:
@@ -309,7 +259,7 @@ def workspace_folders(client_init_params: LspObject) -> Iterator[Path]:
 
 class MultiLeankLspServer(LspServer):
     def __init__(
-        self, editor: RpcInterface, factory: LeankServerFactory, tg: TaskGroup
+        self, editor: RpcInterface, factory: LocalChannelFactory, tg: TaskGroup
     ):
         self._editor = editor
         self._factory = LeankSessionFactory(factory, tg)
@@ -367,7 +317,7 @@ class MultiLeankLspServer(LspServer):
 
 
 class MultiLeankLspService(LspService):
-    def __init__(self, factory: LeankServerFactory):
+    def __init__(self, factory: LocalChannelFactory):
         self._factory = factory
 
     def start(self, client: RpcInterface, tg: TaskGroup) -> LspServer:
@@ -387,7 +337,7 @@ def main(cmd_line_args: list[str] | None = None) -> int:
     cli.add_argument('command', choices=['stdio'])
     cli.parse_args(cmd_line_args)
 
-    factory = LeankSubprocessFactory(extra_args)
+    factory: LocalChannelFactory = RpcSubprocessFactory(extra_args)
     service = MultiLeankLspService(factory)
     return async_stdio_main(service.amain)
 

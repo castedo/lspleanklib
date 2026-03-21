@@ -3,12 +3,13 @@ import pytest
 import asyncio, contextlib, os, shutil
 from pathlib import Path
 
-from lspleanklib.lspleank import LeankSubprocessFactory, MultiLeankLspService
+from lspleanklib.lspleank import MultiLeankLspService
 from lspleanklib.jsonrpc import (
     MethodCall as MC,
     Response,
     RpcInterface,
 )
+from lspleanklib.server import RpcSubprocessFactory
 
 from util import MockEditor, jsonrpc_xpipe, initialize_call
 
@@ -28,7 +29,7 @@ if os.environ.get('SNIFF_LSP'):
 @contextlib.asynccontextmanager
 async def server_session(editor_impl: RpcInterface, server_cmd: list[str]):
     async with jsonrpc_xpipe() as (outer, inner):
-        factory = LeankSubprocessFactory(server_cmd)
+        factory = RpcSubprocessFactory(server_cmd)
         service = MultiLeankLspService(factory)
         service_task = asyncio.create_task(service.run(inner))
         outer.handle(editor_impl)

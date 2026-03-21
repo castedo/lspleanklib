@@ -4,15 +4,61 @@ Generic server code
 
 from __future__ import annotations
 import abc, asyncio, sys, threading, typing
-from asyncio import AbstractEventLoop, TaskGroup
+from asyncio import AbstractEventLoop, TaskGroup, subprocess
 from collections.abc import Awaitable, Callable
+from pathlib import Path
+from typing import Sequence
 
 from .aio import DuplexStream, ReadFilePump, WriterFileAdapter
 from .jsonrpc import (
     JsonRpcDuplexChannel,
+    RpcDuplexChannel,
     RpcInterface,
 )
 from .util import log
+
+
+class LocalChannelFactory(typing.Protocol):
+    async def anew(self, work_dir: Path) -> RpcDuplexChannel: ...
+
+
+class RpcSubprocess(RpcDuplexChannel):
+    def __init__(self, work_dir: Path, proc: subprocess.Process):
+        self._work_dir = work_dir
+        assert proc.stdin and proc.stdout
+        self._proc = proc
+        aio = DuplexStream(proc.stdout, proc.stdin)
+        self._sub_con = JsonRpcDuplexChannel(aio, 'subproc')
+
+    @property
+    def proxy(self) -> RpcInterface:
+        return self._sub_con.proxy
+
+    async def pump(self) -> None:
+        log.debug(f"Subprocess {self._proc.pid} for {self._work_dir}")
+        await self._sub_con.pump()
+        await self._proc.communicate()
+        if self._proc.returncode != 0:
+            msg = "Subprocess exit return code {} for {}"
+            raise RuntimeError(msg.format(self._proc.returncode, self._work_dir))
+
+    def handle(self, client: RpcInterface) -> None:
+        self._sub_con.handle(client)
+
+    @staticmethod
+    async def anew(cmd: Sequence[str], work_dir: Path) -> RpcSubprocess:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, cwd=work_dir, stdin=subprocess.PIPE, stdout=subprocess.PIPE
+        )
+        return RpcSubprocess(work_dir, proc)
+
+
+class RpcSubprocessFactory(LocalChannelFactory):
+    def __init__(self, lsp_cmd: list[str]):
+        self._lsp_cmd = lsp_cmd
+
+    async def anew(self, work_dir: Path) -> RpcDuplexChannel:
+        return await RpcSubprocess.anew(self._lsp_cmd, work_dir)
 
 
 class LspServer(RpcInterface, typing.Protocol):
