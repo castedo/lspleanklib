@@ -22,7 +22,7 @@ from .server import (
     LspServer,
     LspService,
     RpcSubprocessFactory,
-    LocalChannelFactory,
+    RpcDirChannelFactory,
     async_stdio_main,
 )
 from .util import (
@@ -93,8 +93,7 @@ class LeankSession:
 
     async def pump(self) -> None:
         channel = await self._future_channel
-        channel.handle(self.client)
-        await channel.pump()
+        await channel.pump(self.client)
 
     async def _initialize(self) -> Response:
         server = await self._future_channel
@@ -138,7 +137,7 @@ class LeankSession:
 
 
 class LeankSessionFactory:
-    def __init__(self, factory: LocalChannelFactory, tg: TaskGroup):
+    def __init__(self, factory: RpcDirChannelFactory, tg: TaskGroup):
         self._factory = factory
         self._tg = tg
 
@@ -259,7 +258,7 @@ def workspace_folders(client_init_params: LspObject) -> Iterator[Path]:
 
 class MultiLeankLspServer(LspServer):
     def __init__(
-        self, editor: RpcInterface, factory: LocalChannelFactory, tg: TaskGroup
+        self, editor: RpcInterface, factory: RpcDirChannelFactory, tg: TaskGroup
     ):
         self._editor = editor
         self._factory = LeankSessionFactory(factory, tg)
@@ -317,7 +316,7 @@ class MultiLeankLspServer(LspServer):
 
 
 class MultiLeankLspService(LspService):
-    def __init__(self, factory: LocalChannelFactory):
+    def __init__(self, factory: RpcDirChannelFactory):
         self._factory = factory
 
     def start(self, client: RpcInterface, tg: TaskGroup) -> LspServer:
@@ -337,7 +336,7 @@ def main(cmd_line_args: list[str] | None = None) -> int:
     cli.add_argument('command', choices=['stdio'])
     cli.parse_args(cmd_line_args)
 
-    factory: LocalChannelFactory = RpcSubprocessFactory(extra_args)
+    factory: RpcDirChannelFactory = RpcSubprocessFactory(extra_args)
     service = MultiLeankLspService(factory)
     return async_stdio_main(service.amain)
 

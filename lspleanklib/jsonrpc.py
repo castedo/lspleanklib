@@ -224,9 +224,7 @@ class RpcDuplexChannel(typing.Protocol):
     @property
     def proxy(self) -> RpcInterface: ...
 
-    async def pump(self) -> None: ...
-
-    def handle(self, impl: RpcInterface) -> None: ...
+    async def pump(self, impl: RpcInterface) -> None: ...
 
 
 async def await_send_response(
@@ -245,16 +243,12 @@ class JsonRpcDuplexChannel(RpcDuplexChannel):
         self._aio = aio
         self._proxy = RemoteRpcProxy(aio.aout)
         self.name = name
-        self._impl: RpcInterface | None = None
 
     @property
     def proxy(self) -> RpcInterface:
         return self._proxy
 
-    def handle(self, impl: RpcInterface) -> None:
-        self._impl = impl
-
-    async def pump(self) -> None:
+    async def pump(self, impl: RpcInterface) -> None:
         """Listen for JSONRPC message on stream input until stream EOF.
 
         impl: implements the methods for RPC calls received on stream input
@@ -266,16 +260,14 @@ class JsonRpcDuplexChannel(RpcDuplexChannel):
                         if isinstance(msg.payload, Response):
                             self._proxy.got_response(msg.payload, msg.id)
                         elif msg.id is None:
-                            if self._impl:
-                                await self._impl.notify(msg.payload)
-                            else:
-                                err = "No handler for '{}' notification in {} pump"
-                                warn(err.format(msg.payload.method, self.name))
+                            await impl.notify(msg.payload)
                         else:
-                            await self._request(msg.id, msg.payload, response_tasks)
+                            fix_id = msg.id if isinstance(msg.id, str) else None
+                            tbd = await impl.request(msg.payload, fix_id)
+                            coro = await_send_response(self._aio.aout, tbd, msg.id)
+                            response_tasks.create_task(coro)
                 finally:
-                    if self._impl is not None:
-                        self._impl.close()
+                    impl.close()
                     self._proxy.end_of_incomming_responses()
                     log.debug(f"{self.name} pump done reading responses")
         finally:
@@ -288,15 +280,3 @@ class JsonRpcDuplexChannel(RpcDuplexChannel):
                 yield JsonRpcMsg.from_jsonrpc(msg)
             except ValueError as ex:
                 log.exception(ex)
-
-    async def _request(
-        self, msg_id: int | str | None, mc: MethodCall, tg: asyncio.TaskGroup
-    ) -> None:
-        fix_id = msg_id if isinstance(msg_id, str) else None
-        if self._impl:
-            tbd_response = await self._impl.request(mc, fix_id)
-        else:
-            tbd_response = future_error(ErrorCodes.MethodNotFound)
-            err = "No handler for '{}' request in {} pump"
-            warn(err.format(mc.method, self.name))
-        tg.create_task(await_send_response(self._aio.aout, tbd_response, msg_id))

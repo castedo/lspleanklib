@@ -32,8 +32,7 @@ async def server_session(editor_impl: RpcInterface, server_cmd: list[str]):
         factory = RpcSubprocessFactory(server_cmd)
         service = MultiLeankLspService(factory)
         service_task = asyncio.create_task(service.run(inner))
-        outer.handle(editor_impl)
-        client_pump_task = asyncio.create_task(outer.pump())
+        client_pump_task = asyncio.create_task(outer.pump(editor_impl))
         yield outer.proxy
         assert await service_task == True
         await client_pump_task

@@ -18,12 +18,12 @@ from .jsonrpc import (
 from .util import log
 
 
-class LocalChannelFactory(typing.Protocol):
+class RpcDirChannelFactory(typing.Protocol):
     async def anew(self, work_dir: Path) -> RpcDuplexChannel: ...
 
 
 class RpcSubprocess(RpcDuplexChannel):
-    def __init__(self, work_dir: Path, proc: subprocess.Process):
+    def __init__(self, proc: subprocess.Process, work_dir: Path):
         self._work_dir = work_dir
         assert proc.stdin and proc.stdout
         self._proc = proc
@@ -34,26 +34,23 @@ class RpcSubprocess(RpcDuplexChannel):
     def proxy(self) -> RpcInterface:
         return self._sub_con.proxy
 
-    async def pump(self) -> None:
+    async def pump(self, parent: RpcInterface) -> None:
         log.debug(f"Subprocess {self._proc.pid} for {self._work_dir}")
-        await self._sub_con.pump()
+        await self._sub_con.pump(parent)
         await self._proc.communicate()
         if self._proc.returncode != 0:
             msg = "Subprocess exit return code {} for {}"
             raise RuntimeError(msg.format(self._proc.returncode, self._work_dir))
-
-    def handle(self, client: RpcInterface) -> None:
-        self._sub_con.handle(client)
 
     @staticmethod
     async def anew(cmd: Sequence[str], work_dir: Path) -> RpcSubprocess:
         proc = await asyncio.create_subprocess_exec(
             *cmd, cwd=work_dir, stdin=subprocess.PIPE, stdout=subprocess.PIPE
         )
-        return RpcSubprocess(work_dir, proc)
+        return RpcSubprocess(proc, work_dir)
 
 
-class RpcSubprocessFactory(LocalChannelFactory):
+class RpcSubprocessFactory(RpcDirChannelFactory):
     def __init__(self, lsp_cmd: list[str]):
         self._lsp_cmd = lsp_cmd
 
@@ -72,8 +69,7 @@ class LspService:
     async def run(self, client_chan: JsonRpcDuplexChannel) -> bool:
         async with TaskGroup() as tg:
             server = self.start(client_chan.proxy, tg)
-            client_chan.handle(server)
-            tg.create_task(client_chan.pump())
+            tg.create_task(client_chan.pump(server))
         return server.is_initialized()
 
     async def amain(self, stdio: DuplexStream) -> int:

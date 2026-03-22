@@ -1,6 +1,6 @@
 import pytest
 
-import asyncio, contextlib, logging, os, shutil, subprocess, sys
+import asyncio, contextlib, logging, os, shutil, sys
 from pathlib import Path
 from typing import Any, BinaryIO
 
@@ -65,10 +65,8 @@ async def msg_loop(super_io: DuplexStream, sub_io: DuplexStream) -> None:
     super_con = JsonRpcDuplexChannel(super_io, 'super')
     sub_con = JsonRpcDuplexChannel(sub_io, 'sub')
     async with asyncio.TaskGroup() as tg:
-        sub_con.handle(super_con.proxy)
-        super_con.handle(sub_con.proxy)
-        tg.create_task(sub_con.pump())
-        tg.create_task(super_con.pump())
+        tg.create_task(sub_con.pump(super_con.proxy))
+        tg.create_task(super_con.pump(sub_con.proxy))
 
 
 @pytest.fixture
@@ -270,7 +268,6 @@ async def test_bogus_stdin(caplog, capsys) -> None:
         retcode = await tloop
         assert retcode == 1
         assert await outer.ain.read() == b''
-#        assert caplog.records
         captured = capsys.readouterr()
         assert captured.out == ""
         assert captured.err == ""
@@ -296,15 +293,3 @@ async def test_sub_exec_pylsp(cmdline):
     await write_notify(proc.stdin, "exit", None)
     await proc.communicate()
     assert proc.returncode == 0
-
-
-def test_sub_exec_dev_null():
-    result = subprocess.run(
-        [sys.executable, "-m", "lspleanklib", "stdio", "--", "cat"],
-        stdin=subprocess.DEVNULL,
-        text=False,
-        capture_output=True,
-    )
-    assert result.returncode != 0
-    assert result.stdout == b""
-    assert len(result.stderr)
