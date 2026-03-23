@@ -1,12 +1,12 @@
 import asyncio, contextlib, os
-from asyncio import Future
+from asyncio import Future, TaskGroup
 from pathlib import Path
 from typing import BinaryIO, Awaitable
 from concurrent.futures import ThreadPoolExecutor
 
 from lspleanklib.aio import DuplexStream, MinimalReader, ReadFilePump, WriterFileAdapter
 from lspleanklib.jsonrpc import JsonRpcDuplexChannel, MethodCall, Response, RpcInterface
-from lspleanklib.lspleank import MultiLeankLspService, RpcSubprocessFactory
+from lspleanklib.lspleank import MultiLeankLspServer, RpcSubprocessFactory
 from lspleanklib.util import LspAny
 
 
@@ -84,6 +84,8 @@ class MockEditor(RpcInterface):
 
 async def ok_server_loop(stdio: DuplexStream, cmd_line) -> bool:
     lake_factory = RpcSubprocessFactory(cmd_line)
-    service = MultiLeankLspService(lake_factory)
-    retcode = await service.amain(stdio)
-    return retcode == 0
+    client_chan = JsonRpcDuplexChannel(stdio, 'stdio')
+    async with TaskGroup() as tg:
+        server_proxy = MultiLeankLspServer(client_chan.proxy, lake_factory, tg)
+        tg.create_task(client_chan.pump(server_proxy))
+    return server_proxy.is_initialized()

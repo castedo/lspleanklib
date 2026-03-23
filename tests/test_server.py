@@ -253,7 +253,8 @@ async def test_bogus_stdin(caplog, capsys) -> None:
         outer.aout.write(b"BOGUS")
         await outer.aout.drain()
         outer.aout.close()
-        assert await tloop == False
+        with pytest.raises(ExceptionGroup):
+            await tloop
         assert await outer.ain.read() == b''
         captured = capsys.readouterr()
         assert captured.out == ""

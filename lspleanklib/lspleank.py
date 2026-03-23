@@ -19,8 +19,8 @@ from .jsonrpc import (
     future_error,
 )
 from .server import (
+    LspProgram,
     LspServer,
-    LspService,
     RpcSubprocessFactory,
     RpcDirChannelFactory,
     async_stdio_main,
@@ -315,30 +315,31 @@ class MultiLeankLspServer(LspServer):
         return adapt_init_response(response)
 
 
-class MultiLeankLspService(LspService):
-    def __init__(self, factory: RpcDirChannelFactory):
-        self._factory = factory
+class LspLeankProgram(LspProgram):
+    command: str
+    extra_args: list[str]
+
+    def __init__(self, cmd_line_args: list[str]):
+        cli = argparse.ArgumentParser(prog='lspleank', description=__doc__)
+        cli.add_argument('--version', action='version', version=version())
+        cli.add_argument('command', choices=['stdio'])
+
+        (cmd_line_args, self.extra_args) = split_cmd_line(cmd_line_args)
+        cli.parse_args(cmd_line_args, self)
+        if not self.extra_args:
+            self.extra_args = ['lake', 'serve']
 
     def start(self, client: RpcInterface, tg: TaskGroup) -> LspServer:
-        return MultiLeankLspServer(client, self._factory, tg)
+        factory: RpcDirChannelFactory = RpcSubprocessFactory(self.extra_args)
+        return MultiLeankLspServer(client, factory, tg)
 
 
 def main(cmd_line_args: list[str] | None = None) -> int:
-    if cmd_line_args is None:
-        cmd_line_args = sys.argv[1:]
-    (cmd_line_args, extra_args) = split_cmd_line(cmd_line_args)
-
     logging.basicConfig()
     logging.captureWarnings(True)
-
-    cli = argparse.ArgumentParser(prog='lspleank', description=__doc__)
-    cli.add_argument('--version', action='version', version=version())
-    cli.add_argument('command', choices=['stdio'])
-    cli.parse_args(cmd_line_args)
-
-    factory: RpcDirChannelFactory = RpcSubprocessFactory(extra_args)
-    service = MultiLeankLspService(factory)
-    return async_stdio_main(service.amain)
+    if cmd_line_args is None:
+        cmd_line_args = sys.argv[1:]
+    return async_stdio_main(LspLeankProgram(cmd_line_args))
 
 
 if __name__ == '__main__':

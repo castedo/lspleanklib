@@ -3,23 +3,64 @@ Generic server code
 """
 
 from __future__ import annotations
-import abc, asyncio, sys, threading, typing
+import abc, asyncio, os, sys, threading, typing
 from asyncio import AbstractEventLoop, TaskGroup, subprocess
-from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Sequence
 
 from .aio import DuplexStream, ReadFilePump, WriterFileAdapter
+from .cli import version
 from .jsonrpc import (
     JsonRpcDuplexChannel,
+    MethodCall,
+    Response,
     RpcDuplexChannel,
     RpcInterface,
 )
-from .util import log
+from .util import LspObject, get_obj, log
+
+
+LSP_CLIENT_NAME = "lspleank"
+LSP_SERVER_NAME = "lspleank"
 
 
 class RpcDirChannelFactory(typing.Protocol):
     async def anew(self, work_dir: Path) -> RpcDuplexChannel: ...
+
+
+def text_doc_caps(init_params: LspObject) -> LspObject:
+    caps = get_obj(init_params, 'capabilities')
+    return {'textDocument': caps.get('textDocument', {})}
+
+
+def leank_init_call(work_root: Path, capabilities: LspObject) -> MethodCall:
+    return MethodCall(
+        'initialize',
+        {
+            'capabilities': capabilities,
+            'clientInfo': {'name': LSP_CLIENT_NAME, 'version': version()},
+            'processId': os.getpid(),
+            'rootUri': work_root.as_uri(),
+        },
+    )
+
+
+def leank_init_response(init_response: Response) -> Response:
+    if init_response.error is not None:
+        return init_response
+    else:
+        if isinstance(init_response.result, dict):
+            # TODO check and standardize server caps
+            server_caps = init_response.result.get('capabilities')
+            server_caps = server_caps if isinstance(server_caps, dict) else {}
+        else:
+            server_caps = {}
+    return Response(
+        {
+            'capabilities': server_caps,
+            'serverInfo': {'name': LSP_SERVER_NAME, 'version': version()},
+        }
+    )
 
 
 class RpcSubprocess(RpcDuplexChannel):
@@ -62,19 +103,25 @@ class LspServer(RpcInterface, typing.Protocol):
     def is_initialized(self) -> bool: ...
 
 
-class LspService:
+class AsyncProgram(typing.Protocol):
+    async def amain(self, stdio: DuplexStream, loop: AbstractEventLoop) -> int: ...
+
+
+async def lsp_server_loop(server: LspProgram, client: JsonRpcDuplexChannel) -> bool:
+    async with TaskGroup() as tg:
+        server_proxy = server.start(client.proxy, tg)
+        tg.create_task(client.pump(server_proxy))
+    return server_proxy.is_initialized()
+
+
+class LspProgram:
     @abc.abstractmethod
     def start(self, client: RpcInterface, tg: TaskGroup) -> LspServer: ...
 
-    async def run(self, client_chan: JsonRpcDuplexChannel) -> bool:
-        async with TaskGroup() as tg:
-            server = self.start(client_chan.proxy, tg)
-            tg.create_task(client_chan.pump(server))
-        return server.is_initialized()
-
-    async def amain(self, stdio: DuplexStream) -> int:
+    async def amain(self, stdio: DuplexStream, loop: AbstractEventLoop) -> int:
         try:
-            ok = await self.run(JsonRpcDuplexChannel(stdio, 'stdio'))
+            client_chan = JsonRpcDuplexChannel(stdio, 'stdio')
+            ok = await lsp_server_loop(self, client_chan)
         except Exception as ex:
             log.exception(ex)
             return 1
@@ -85,24 +132,28 @@ class LspService:
 
 
 class AsyncMainLoopThread(threading.Thread):
-    def __init__(self, loop: AbstractEventLoop, amain: Awaitable[int]):
+    def __init__(
+        self, aprog: AsyncProgram, stdio: DuplexStream, loop: AbstractEventLoop
+    ):
         super().__init__(name=self.__class__.__name__)
+        self._aprog = aprog
+        self._stdio = stdio
         self._loop = loop
-        self._amain = amain
         self.retcode: int | None = None
 
     def run(self) -> None:
         asyncio.set_event_loop(self._loop)
-        self.retcode = self._loop.run_until_complete(self._amain)
+        coro = self._aprog.amain(self._stdio, self._loop)
+        self.retcode = self._loop.run_until_complete(coro)
 
 
-def async_stdio_main(amain: Callable[[DuplexStream], Awaitable[int]]) -> int:
+def async_stdio_main(aprog: AsyncProgram) -> int:
     loop = asyncio.new_event_loop()
-    pump = ReadFilePump(sys.stdin.fileno(), loop)
-    stdio = DuplexStream(pump.stream, WriterFileAdapter(sys.stdout.buffer, loop))
-    amain_thread = AsyncMainLoopThread(loop, amain(stdio))
+    stdin_pump = ReadFilePump(sys.stdin.fileno(), loop)
+    stdio = DuplexStream(stdin_pump.stream, WriterFileAdapter(sys.stdout.buffer, loop))
+    amain_thread = AsyncMainLoopThread(aprog, stdio, loop)
     amain_thread.start()
-    pump.run()
+    stdin_pump.run()
     try:
         amain_thread.join()
     except KeyboardInterrupt as ex:
