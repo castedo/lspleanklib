@@ -3,15 +3,14 @@ import pytest
 import asyncio, contextlib, os, shutil
 from pathlib import Path
 
-from lspleanklib.lspleank import MultiLeankLspService
 from lspleanklib.jsonrpc import (
+    JsonRpcDuplexChannel,
     MethodCall as MC,
     Response,
     RpcInterface,
 )
-from lspleanklib.server import RpcSubprocessFactory
 
-from util import MockEditor, jsonrpc_xpipe, initialize_call
+from util import MockEditor, aio_xpipe, initialize_call
 
 # using `pytestmark` to skip this entire module
 pytestmark = pytest.mark.skipif(
@@ -26,17 +25,20 @@ if os.environ.get('SNIFF_LSP'):
     LAKE_CMD = ["lsp-devtools", "agent", "--"] + LAKE_CMD
 
 
+from util import ok_server_loop
+
+
 @contextlib.asynccontextmanager
 async def server_session(editor_impl: RpcInterface, server_cmd: list[str]):
-    async with jsonrpc_xpipe() as (outer, inner):
-        factory = RpcSubprocessFactory(server_cmd)
-        service = MultiLeankLspService(factory)
-        service_task = asyncio.create_task(service.run(inner))
-        client_pump_task = asyncio.create_task(outer.pump(editor_impl))
-        yield outer.proxy
-        assert await service_task == True
+    async with aio_xpipe() as (outer, inner):
+        outer_chan = JsonRpcDuplexChannel(outer, 'outer')
+        client_pump_task = asyncio.create_task(outer_chan.pump(editor_impl))
+        server_task = asyncio.create_task(ok_server_loop(inner, server_cmd))
+        yield outer_chan.proxy
+        assert await server_task == True
         await client_pump_task
         assert not client_pump_task.exception()
+
 
 @contextlib.asynccontextmanager
 async def server_session_init(client: RpcInterface, server_cmd: list[str], root: Path):

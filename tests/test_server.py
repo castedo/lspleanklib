@@ -19,9 +19,8 @@ from lspleanklib.jsonrpc import (
     write_jsonrpc,
     write_message,
 )
-from lspleanklib.lspleank import RpcSubprocessFactory, MultiLeankLspService
 
-from util import aio_xpipe, pipe_stream_reader
+from util import aio_xpipe, ok_server_loop, pipe_stream_reader
 
 
 skipif_no_pylsp = pytest.mark.skipif(
@@ -31,12 +30,6 @@ skipif_no_pylsp = pytest.mark.skipif(
 TESTS_DIR = Path(__file__).parent
 TEST_CASES = TESTS_DIR / "cases"
 INIT_BYTES = (TEST_CASES / "vim9-lsp-init.txt").read_bytes()
-
-
-async def server_loop(stdio: DuplexStream, cmd_line) -> int:
-    factory = RpcSubprocessFactory(cmd_line)
-    service = MultiLeankLspService(factory)
-    return await service.amain(stdio)
 
 
 async def write_notify(aout, method, params) -> None:
@@ -192,17 +185,16 @@ async def test_definition(msg_loop_trio, capsys):
 
 async def test_empty_stdin_subproc() -> None:
     async with aio_xpipe() as (outer, inner):
-        tloop = asyncio.create_task(server_loop(inner, ["cat"]))
+        tloop = asyncio.create_task(ok_server_loop(inner, ["cat"]))
         outer.aout.close()
-        retcode = await tloop
-        assert retcode != 0
+        assert await tloop == False
 
 
 @skipif_no_pylsp
 @pytest.mark.slow
 async def test_loop_pylsp():
     async with aio_xpipe() as (outer, inner):
-        tloop = asyncio.create_task(server_loop(inner, ["pylsp"]))
+        tloop = asyncio.create_task(ok_server_loop(inner, ["pylsp"]))
         outer.aout.write(INIT_BYTES)
         await outer.aout.drain()
         msg = await read_message(outer.ain)
@@ -212,61 +204,56 @@ async def test_loop_pylsp():
         await write_request(outer.aout, "shutdown", None, 2)
         await write_notify(outer.aout, "exit", None)
         outer.aout.close()
-        retcode = await tloop
-        assert retcode == 0
+        assert await tloop == True
 
 
 @skipif_no_pylsp
 @pytest.mark.slow
 async def test_aborted_initialization():
     async with aio_xpipe() as (outer, inner):
-        tloop = asyncio.create_task(server_loop(inner, ["pylsp"]))
+        tloop = asyncio.create_task(ok_server_loop(inner, ["pylsp"]))
         outer.aout.write(INIT_BYTES)
         await outer.aout.drain()
         await read_message(outer.ain)
         outer.aout.close()
-        retcode = await tloop
-        assert retcode == 1
+        assert await tloop == False
 
 
 @skipif_no_pylsp
 @pytest.mark.slow
 async def test_eof_without_shutdown():
     async with aio_xpipe() as (outer, inner):
-        tloop = asyncio.create_task(server_loop(inner, ["pylsp"]))
+        tloop = asyncio.create_task(ok_server_loop(inner, ["pylsp"]))
         outer.aout.write(INIT_BYTES)
         await outer.aout.drain()
         await read_message(outer.ain)
         await write_notify(outer.aout, "initialized", {})
         outer.aout.close()
-        retcode = await tloop
-        assert retcode == 0
+        assert await tloop == True
 
 
 @skipif_no_pylsp
 @pytest.mark.slow
 async def test_eof_without_exit():
     async with aio_xpipe() as (outer, inner):
-        tloop = asyncio.create_task(server_loop(inner, ["pylsp"]))
+        tloop = asyncio.create_task(ok_server_loop(inner, ["pylsp"]))
         outer.aout.write(INIT_BYTES)
         await outer.aout.drain()
         await read_message(outer.ain)
         await write_notify(outer.aout, "initialized", {})
         await write_request(outer.aout, "shutdown", None, 2)
         outer.aout.close()
-        retcode = await tloop
-        assert retcode == 0
+        assert await tloop == True
 
 
 async def test_bogus_stdin(caplog, capsys) -> None:
     caplog.set_level(logging.CRITICAL)
     async with aio_xpipe() as (outer, inner):
-        tloop = asyncio.create_task(server_loop(inner, ["cat"]))
+        tloop = asyncio.create_task(ok_server_loop(inner, ["cat"]))
         outer.aout.write(b"BOGUS")
         await outer.aout.drain()
         outer.aout.close()
-        retcode = await tloop
-        assert retcode == 1
+        assert await tloop == False
         assert await outer.ain.read() == b''
         captured = capsys.readouterr()
         assert captured.out == ""

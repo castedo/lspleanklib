@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from lspleanklib.aio import DuplexStream, MinimalReader, ReadFilePump, WriterFileAdapter
 from lspleanklib.jsonrpc import JsonRpcDuplexChannel, MethodCall, Response, RpcInterface
+from lspleanklib.lspleank import MultiLeankLspService, RpcSubprocessFactory
 from lspleanklib.util import LspAny
 
 
@@ -79,3 +80,10 @@ class MockEditor(RpcInterface):
         async def trivial() -> Response:
             return Response(None)
         return trivial()
+
+
+async def ok_server_loop(stdio: DuplexStream, cmd_line) -> bool:
+    lake_factory = RpcSubprocessFactory(cmd_line)
+    service = MultiLeankLspService(lake_factory)
+    retcode = await service.amain(stdio)
+    return retcode == 0
