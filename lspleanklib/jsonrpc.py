@@ -4,7 +4,7 @@ JSON-RPC for Language Server Protocol
 
 from __future__ import annotations
 import asyncio, enum, json, typing
-from asyncio import Future
+from asyncio import AbstractEventLoop, Future
 from collections.abc import AsyncIterator, Awaitable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from typing import Any, TypeAlias
@@ -142,7 +142,8 @@ async def write_jsonrpc(aout: MinimalWriter, msg: JsonRpcMsg) -> None:
 
 
 class IncommingResponses:
-    def __init__(self) -> None:
+    def __init__(self, loop: AbstractEventLoop) -> None:
+        self._loop = loop
         self._todo: dict[int | str | None, Future[Response]] = {}
         self.next_id = 1
 
@@ -162,7 +163,7 @@ class IncommingResponses:
         if stale is not None:
             warn(f"Response abandoned due to id reuse by new request: {msg_id}")
             stale.cancel()
-        expect: Future[Response] = asyncio.get_running_loop().create_future()
+        expect: Future[Response] = self._loop.create_future()
         self._todo[msg_id] = expect
         return (msg_id, expect)
 
@@ -183,9 +184,9 @@ class RpcInterface(typing.Protocol):
 
 
 class RemoteRpcProxy(RpcInterface):
-    def __init__(self, aout: MinimalWriter):
+    def __init__(self, aout: MinimalWriter, loop: AbstractEventLoop):
         self._aout = aout
-        self._expecting: IncommingResponses | None = IncommingResponses()
+        self._expecting: IncommingResponses | None = IncommingResponses(loop)
 
     def close(self) -> None:
         log.debug(f"closing {self.__class__.__name__}")
@@ -239,9 +240,9 @@ async def await_send_response(
 
 
 class JsonRpcDuplexChannel(RpcDuplexChannel):
-    def __init__(self, aio: DuplexStream, name: str):
+    def __init__(self, aio: DuplexStream, loop: AbstractEventLoop, name: str):
         self._aio = aio
-        self._proxy = RemoteRpcProxy(aio.aout)
+        self._proxy = RemoteRpcProxy(aio.aout, loop)
         self.name = name
 
     @property

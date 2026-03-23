@@ -25,7 +25,9 @@ LSP_SERVER_NAME = "lspleank"
 
 
 class RpcDirChannelFactory(typing.Protocol):
-    async def anew(self, work_dir: Path) -> RpcDuplexChannel: ...
+    async def anew(
+        self, work_dir: Path, loop: AbstractEventLoop
+    ) -> RpcDuplexChannel: ...
 
 
 def text_doc_caps(init_params: LspObject) -> LspObject:
@@ -64,12 +66,14 @@ def leank_init_response(init_response: Response) -> Response:
 
 
 class RpcSubprocess(RpcDuplexChannel):
-    def __init__(self, proc: subprocess.Process, work_dir: Path):
+    def __init__(
+        self, proc: subprocess.Process, work_dir: Path, loop: AbstractEventLoop
+    ):
         self._work_dir = work_dir
         assert proc.stdin and proc.stdout
         self._proc = proc
         aio = DuplexStream(proc.stdout, proc.stdin)
-        self._sub_con = JsonRpcDuplexChannel(aio, 'subproc')
+        self._sub_con = JsonRpcDuplexChannel(aio, loop, 'subproc')
 
     @property
     def proxy(self) -> RpcInterface:
@@ -84,19 +88,21 @@ class RpcSubprocess(RpcDuplexChannel):
             raise RuntimeError(msg.format(self._proc.returncode, self._work_dir))
 
     @staticmethod
-    async def anew(cmd: Sequence[str], work_dir: Path) -> RpcSubprocess:
+    async def anew(
+        cmd: Sequence[str], work_dir: Path, loop: AbstractEventLoop
+    ) -> RpcSubprocess:
         proc = await asyncio.create_subprocess_exec(
             *cmd, cwd=work_dir, stdin=subprocess.PIPE, stdout=subprocess.PIPE
         )
-        return RpcSubprocess(proc, work_dir)
+        return RpcSubprocess(proc, work_dir, loop)
 
 
 class RpcSubprocessFactory(RpcDirChannelFactory):
     def __init__(self, lsp_cmd: list[str]):
         self._lsp_cmd = lsp_cmd
 
-    async def anew(self, work_dir: Path) -> RpcDuplexChannel:
-        return await RpcSubprocess.anew(self._lsp_cmd, work_dir)
+    async def anew(self, work_dir: Path, loop: AbstractEventLoop) -> RpcDuplexChannel:
+        return await RpcSubprocess.anew(self._lsp_cmd, work_dir, loop)
 
 
 class LspServer(RpcInterface, typing.Protocol):
@@ -107,21 +113,23 @@ class AsyncProgram(typing.Protocol):
     async def amain(self, stdio: DuplexStream, loop: AbstractEventLoop) -> int: ...
 
 
-async def lsp_server_loop(server: LspProgram, client: JsonRpcDuplexChannel) -> bool:
+async def lsp_server_loop(
+    server: LspProgram, client: JsonRpcDuplexChannel, loop: AbstractEventLoop,
+) -> bool:
     async with TaskGroup() as tg:
-        server_proxy = server.start(client.proxy, tg)
+        server_proxy = server.start(client.proxy, loop, tg)
         tg.create_task(client.pump(server_proxy))
     return server_proxy.is_initialized()
 
 
 class LspProgram:
     @abc.abstractmethod
-    def start(self, client: RpcInterface, tg: TaskGroup) -> LspServer: ...
+    def start(self, client: RpcInterface, loop: AbstractEventLoop, tg: TaskGroup) -> LspServer: ...
 
     async def amain(self, stdio: DuplexStream, loop: AbstractEventLoop) -> int:
         try:
-            client_chan = JsonRpcDuplexChannel(stdio, 'stdio')
-            ok = await lsp_server_loop(self, client_chan)
+            client_chan = JsonRpcDuplexChannel(stdio, loop, 'stdio')
+            ok = await lsp_server_loop(self, client_chan, loop)
         except Exception as ex:
             log.exception(ex)
             return 1

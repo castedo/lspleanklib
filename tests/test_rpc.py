@@ -38,9 +38,10 @@ class NullService(RpcInterface):
         pass
 
 async def test_response() -> None:
+    loop = asyncio.get_running_loop()
     async with aio_xpipe() as (local, remote):
         async with asyncio.TaskGroup() as tg:
-            con = JsonRpcDuplexChannel(local, 'local')
+            con = JsonRpcDuplexChannel(local, loop, 'local')
             tg.create_task(con.pump(NotImplementedService()))
             tbd = await con.proxy.request(MethodCall("do/thing", None), None)
             msg = await read_message(remote.ain)
@@ -51,9 +52,10 @@ async def test_response() -> None:
 
 
 async def test_response_cancelled() -> None:
+    loop = asyncio.get_running_loop()
     async with aio_xpipe() as (local, remote):
         async with asyncio.TaskGroup() as tg:
-            con = JsonRpcDuplexChannel(local, 'local')
+            con = JsonRpcDuplexChannel(local, loop, 'local')
             tg.create_task(con.pump(NotImplementedService()))
             tbd = await con.proxy.request(MethodCall("do/thing", None), None)
             msg = await read_message(remote.ain)
@@ -69,9 +71,10 @@ async def test_response_cancelled() -> None:
 
 
 async def test_simple_serve() -> None:
+    loop = asyncio.get_running_loop()
     async with aio_xpipe() as (local, remote):
         async with asyncio.TaskGroup() as tg:
-            con = JsonRpcDuplexChannel(local, 'local')
+            con = JsonRpcDuplexChannel(local, loop, 'local')
             tg.create_task(con.pump(NullService()))
             await write_message(remote.aout, {"jsonrpc":"2.0", "id": 1, "method": "nothing"})
             msg = await read_message(remote.ain)

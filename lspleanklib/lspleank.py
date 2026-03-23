@@ -3,8 +3,8 @@ Link LSP-enabled editors to Lake LSP servers
 """
 
 from __future__ import annotations
-import argparse, logging, sys
-from asyncio import Future, TaskGroup
+import argparse, asyncio, logging, sys
+from asyncio import AbstractEventLoop, Future, TaskGroup
 from collections.abc import Awaitable, Iterator, Mapping, Sequence
 from pathlib import Path
 from warnings import warn
@@ -111,8 +111,8 @@ class LeankSessionFactory:
         self._factory = factory
         self._tg = tg
 
-    def new(self, client: RpcInterface, work_root: Path) -> LeankSession:
-        future_channel = self._tg.create_task(self._factory.anew(work_root))
+    def new(self, client: RpcInterface, work_root: Path, loop: AbstractEventLoop) -> LeankSession:
+        future_channel = self._tg.create_task(self._factory.anew(work_root, loop))
         sess = LeankSession(client, work_root, future_channel, self._tg)
         self._tg.create_task(sess.pump())
         return sess
@@ -137,10 +137,16 @@ def pick_workspace_dir(doc_path: Path) -> Path:
 
 
 class LeankManager:
-    def __init__(self, init_session: LeankSession, factory: LeankSessionFactory):
+    def __init__(
+        self,
+        init_session: LeankSession,
+        factory: LeankSessionFactory,
+        loop: AbstractEventLoop,
+    ):
         self._client = init_session.client
         self._sessions = [init_session]
         self._factory = factory
+        self._loop = loop
 
     def close(self) -> None:
         for s in self._sessions:
@@ -178,7 +184,7 @@ class LeankManager:
         for s in self._sessions:
             if s.work_root == lake_dir:
                 return s
-        sess = self._factory.new(self._client, lake_dir)
+        sess = self._factory.new(self._client, lake_dir, self._loop)
         self._sessions.append(sess)
         await sess.initialize_response()
         await sess.initialized()
@@ -209,10 +215,11 @@ def workspace_folders(client_init_params: LspObject) -> Iterator[Path]:
 
 class MultiLeankLspServer(LspServer):
     def __init__(
-        self, editor: RpcInterface, factory: RpcDirChannelFactory, tg: TaskGroup
+        self, editor: RpcInterface, factory: RpcDirChannelFactory, loop: AbstractEventLoop, tg: TaskGroup
     ):
         self._editor = editor
         self._factory = LeankSessionFactory(factory, tg)
+        self._loop = loop
         self._workspace_folders: list[Path] = []
         self._initializing: LeankSession | None = None
         self._initialized: LeankManager | None = None
@@ -233,7 +240,7 @@ class MultiLeankLspServer(LspServer):
         elif self._initializing and mc.method == 'initialized':
             first_sess = self._initializing
             self._initializing = None
-            self._initialized = LeankManager(first_sess, self._factory)
+            self._initialized = LeankManager(first_sess, self._factory, self._loop)
             await first_sess.initialized()
         else:
             what = "initializing" if self._initializing else "not initializing"
@@ -258,7 +265,7 @@ class MultiLeankLspServer(LspServer):
         self._workspace_folders.extend(workspace_folders(init_params))
         root_uri = get_str(init_params, 'rootUri')
         work_root = Path.cwd() if not root_uri else Path_from_uri(root_uri)
-        first_sess = self._factory.new(self._editor, work_root)
+        first_sess = self._factory.new(self._editor, work_root, self._loop)
         response = await first_sess.initialize_response()
         if response.error is None:
             self._initializing = first_sess
@@ -279,9 +286,11 @@ class LspLeankProgram(LspProgram):
         if not self.extra_args:
             self.extra_args = ['lake', 'serve']
 
-    def start(self, client: RpcInterface, tg: TaskGroup) -> LspServer:
+    def start(
+        self, client: RpcInterface, loop: AbstractEventLoop, tg: TaskGroup
+    ) -> LspServer:
         factory: RpcDirChannelFactory = RpcSubprocessFactory(self.extra_args)
-        return MultiLeankLspServer(client, factory, tg)
+        return MultiLeankLspServer(client, factory, loop, tg)
 
 
 def main(cmd_line_args: list[str] | None = None) -> int:

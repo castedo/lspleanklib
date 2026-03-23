@@ -83,9 +83,10 @@ class MockEditor(RpcInterface):
 
 
 async def ok_server_loop(stdio: DuplexStream, cmd_line) -> bool:
+    loop = asyncio.get_running_loop()
     lake_factory = RpcSubprocessFactory(cmd_line)
-    client_chan = JsonRpcDuplexChannel(stdio, 'stdio')
+    client_chan = JsonRpcDuplexChannel(stdio, loop, 'stdio')
     async with TaskGroup() as tg:
-        server_proxy = MultiLeankLspServer(client_chan.proxy, lake_factory, tg)
+        server_proxy = MultiLeankLspServer(client_chan.proxy, lake_factory, loop, tg)
         tg.create_task(client_chan.pump(server_proxy))
     return server_proxy.is_initialized()
