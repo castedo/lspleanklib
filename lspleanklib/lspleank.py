@@ -3,7 +3,7 @@ Link LSP-enabled editors to Lake LSP servers
 """
 
 from __future__ import annotations
-import argparse, logging, os, sys
+import argparse, logging, sys
 from asyncio import Future, TaskGroup
 from collections.abc import Awaitable, Iterator, Mapping, Sequence
 from pathlib import Path
@@ -24,6 +24,8 @@ from .server import (
     RpcSubprocessFactory,
     RpcDirChannelFactory,
     async_stdio_main,
+    leank_init_call,
+    leank_init_response,
 )
 from .util import (
     LspAny,
@@ -37,10 +39,6 @@ from .util import (
 )
 
 
-LSP_SERVER_NAME = "lspleank"
-LSP_CLIENT_NAME = LSP_SERVER_NAME
-
-
 LAKE_WORKSPACE_MARKER = {
     "lakefile.toml",
     "lakefile.lean",
@@ -49,38 +47,10 @@ LAKE_WORKSPACE_MARKER = {
 }
 
 
-class LeankMultiClient(RpcInterface):
-    def __init__(self, editor: RpcInterface, editor_caps: LspObject):
-        self._editor = editor
-        self._caps = {'textDocument': editor_caps.get('textDocument', {})}
-
-    def close(self) -> None:
-        self._editor.close()
-
-    async def notify(self, mc: MethodCall) -> None:
-        await self._editor.notify(mc)
-
-    async def request(
-        self, mc: MethodCall, fix_id: str | None = None
-    ) -> Awaitable[Response]:
-        return await self._editor.request(mc, fix_id)
-
-    def init_call(self, work_root: Path) -> MethodCall:
-        return MethodCall(
-            'initialize',
-            {
-                'capabilities': self._caps,
-                'clientInfo': {'name': LSP_CLIENT_NAME, 'version': version()},
-                'processId': os.getpid(),
-                'rootUri': work_root.as_uri(),
-            },
-        )
-
-
 class LeankSession:
     def __init__(
         self,
-        client: LeankMultiClient,
+        client: RpcInterface,
         work_root: Path,
         future_channel: Future[RpcDuplexChannel],
         tg: TaskGroup,
@@ -97,7 +67,7 @@ class LeankSession:
 
     async def _initialize(self) -> Response:
         server = await self._future_channel
-        init_call = self.client.init_call(self.work_root)
+        init_call = leank_init_call(self.work_root, {})  # TODO text_doc_caps(init_params))
         aw_response = await server.proxy.request(init_call)
         response = await aw_response
         if response.error is not None:
@@ -141,30 +111,11 @@ class LeankSessionFactory:
         self._factory = factory
         self._tg = tg
 
-    def new(self, client: LeankMultiClient, work_root: Path) -> LeankSession:
+    def new(self, client: RpcInterface, work_root: Path) -> LeankSession:
         future_channel = self._tg.create_task(self._factory.anew(work_root))
         sess = LeankSession(client, work_root, future_channel, self._tg)
         self._tg.create_task(sess.pump())
         return sess
-
-
-def adapt_init_response(lakish_server_init_result: Response) -> Response:
-    if lakish_server_init_result.error is not None:
-        return lakish_server_init_result
-    else:
-        if isinstance(lakish_server_init_result.result, dict):
-            # TODO check and standardize server caps
-            server_caps = lakish_server_init_result.result.get('capabilities')
-            server_caps = server_caps if isinstance(server_caps, dict) else {}
-        else:
-            server_caps = {}
-    response = Response(
-        {
-            'capabilities': server_caps,
-            'serverInfo': {'name': LSP_SERVER_NAME, 'version': version()},
-        }
-    )
-    return response
 
 
 def document_method(mc: MethodCall) -> Path | None:
@@ -305,14 +256,13 @@ class MultiLeankLspServer(LspServer):
             return Response.from_error_code(ErrorCodes.InvalidRequest)
         # TODO warn when folders inconsistent with Lake workspaces
         self._workspace_folders.extend(workspace_folders(init_params))
-        client = LeankMultiClient(self._editor, get_obj(init_params, 'capabilities'))
         root_uri = get_str(init_params, 'rootUri')
         work_root = Path.cwd() if not root_uri else Path_from_uri(root_uri)
-        first_sess = self._factory.new(client, work_root)
+        first_sess = self._factory.new(self._editor, work_root)
         response = await first_sess.initialize_response()
         if response.error is None:
             self._initializing = first_sess
-        return adapt_init_response(response)
+        return leank_init_response(response)
 
 
 class LspLeankProgram(LspProgram):
