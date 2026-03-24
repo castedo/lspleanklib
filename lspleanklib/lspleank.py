@@ -152,7 +152,9 @@ class LeankManager(RpcInterface):
     def set_client_capabilities(self, capabilities: LspObject) -> None:
         self._client_capabilities = capabilities
 
-    async def request_initialize(self, work_root: Path, server: RpcInterface) -> Response:
+    async def request_initialize(
+        self, work_root: Path, server: RpcInterface
+    ) -> Response:
         init_call = leank_init_call(work_root, self._client_capabilities)
         aw_response = await server.request(init_call)
         return await aw_response

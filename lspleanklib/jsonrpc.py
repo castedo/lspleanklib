@@ -210,22 +210,36 @@ class RemoteRpcProxy(RpcInterface):
 
     def got_response(self, response: Response, msg_id: int | str | None) -> None:
         if self._expecting is None:
-            warn('RemoteRpcProxy.got_response called after end_of_incomming_responses')
+            warn('RemoteRpcProxy.got_response called after end_of_incoming_responses')
         else:
             self._expecting.got_response(response, msg_id)
 
     def end_of_incomming_responses(self) -> None:
         if self._expecting:
             self._expecting.cancel_all()
-            log.info("orphaned incomming responses cancelled")
+            log.info("orphaned incoming responses cancelled")
         self._expecting = None
 
 
-class RpcDuplexChannel(typing.Protocol):
+class RpcChannel(typing.Protocol):
     @property
     def proxy(self) -> RpcInterface: ...
 
     async def pump(self, impl: RpcInterface) -> None: ...
+
+
+class NoClient(RpcInterface):
+    async def notify(self, mc: MethodCall) -> None:
+        warn(f"No client RPC implementation for '{mc.method}' notification")
+
+    async def request(
+        self, mc: MethodCall, fix_id: str | None = None
+    ) -> Awaitable[Response]:
+        warn(f"No client RPC implementation for '{mc.method}' request")
+        return future_error(ErrorCodes.MethodNotFound)
+
+    def close(self) -> None:
+        pass
 
 
 async def await_send_response(
@@ -239,7 +253,7 @@ async def await_send_response(
         log.exception(ex)
 
 
-class JsonRpcDuplexChannel(RpcDuplexChannel):
+class JsonRpcChannel(RpcChannel):
     def __init__(self, aio: DuplexStream, loop: AbstractEventLoop, name: str):
         self._aio = aio
         self._proxy = RemoteRpcProxy(aio.aout, loop)
@@ -249,7 +263,7 @@ class JsonRpcDuplexChannel(RpcDuplexChannel):
     def proxy(self) -> RpcInterface:
         return self._proxy
 
-    async def pump(self, impl: RpcInterface) -> None:
+    async def pump(self, impl: RpcInterface = NoClient()) -> None:
         """Listen for JSONRPC message on stream input until stream EOF.
 
         impl: implements the methods for RPC calls received on stream input

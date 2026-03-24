@@ -5,7 +5,7 @@ from typing import BinaryIO, Awaitable
 from concurrent.futures import ThreadPoolExecutor
 
 from lspleanklib.aio import DuplexStream, MinimalReader, ReadFilePump, WriterFileAdapter
-from lspleanklib.jsonrpc import JsonRpcDuplexChannel, MethodCall, Response, RpcInterface
+from lspleanklib.jsonrpc import JsonRpcChannel, MethodCall, Response, RpcInterface
 from lspleanklib.lake import LeankLakeSessionFactory
 from lspleanklib.lspleank import MultiLeankLspSession, RpcSubprocessFactory
 from lspleanklib.server import lsp_server_loop
@@ -49,8 +49,8 @@ async def aio_xpipe():
 @contextlib.asynccontextmanager
 async def jsonrpc_xpipe():
     async with aio_xpipe() as (outer, inner):
-        outer_chan = JsonRpcDuplexChannel(outer, 'outer')
-        inner_chan = JsonRpcDuplexChannel(inner, 'inner')
+        outer_chan = JsonRpcChannel(outer, 'outer')
+        inner_chan = JsonRpcChannel(inner, 'inner')
         yield (outer_chan, inner_chan)
 
 
@@ -89,5 +89,5 @@ async def ok_server_loop(stdio: DuplexStream, cmd_line) -> bool:
     lake_factory = RpcSubprocessFactory(cmd_line)
     sess_factory = LeankLakeSessionFactory(lake_factory, loop)
     session = MultiLeankLspSession(sess_factory)
-    client_chan = JsonRpcDuplexChannel(stdio, loop, 'stdio')
+    client_chan = JsonRpcChannel(stdio, loop, 'stdio')
     return await lsp_server_loop(session, client_chan)

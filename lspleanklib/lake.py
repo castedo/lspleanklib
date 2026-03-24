@@ -10,7 +10,7 @@ from .jsonrpc import (
     ErrorCodes,
     MethodCall,
     Response,
-    RpcDuplexChannel,
+    RpcChannel,
     RpcInterface,
     RpcSession,
     future_error,
@@ -63,7 +63,7 @@ class LeankInitializedServer(RpcInterface):
 
 
 class LeankLakeLspInitializer(LspInitializer):
-    def __init__(self, channel: RpcDuplexChannel):
+    def __init__(self, channel: RpcChannel):
         self._channel = channel
         self._initializing: RpcInterface | None = None
 
@@ -98,7 +98,7 @@ class LeankLakeLspInitializer(LspInitializer):
 
 
 class LeankLakeSession(LspSession):
-    def __init__(self, channel: RpcDuplexChannel):
+    def __init__(self, channel: RpcChannel):
         self._channel = channel
         self._server = LspServer(LeankLakeLspInitializer(channel))
 
