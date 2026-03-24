@@ -53,33 +53,18 @@ LAKE_WORKSPACE_MARKER = {
 }
 
 
-async def aget_session_server(
-    aw_session: Awaitable[RpcSession], client: RpcInterface, tg: TaskGroup
-) -> RpcInterface:
-    session = await aw_session
-    return session.start_server(client, tg)
-
-
 class SubLeank:
-    def __init__(
-        self,
-        work_root: Path,
-        factory: RpcSessionFactory,
-        client: RpcInterface,
-        tg: TaskGroup,
-    ):
+    def __init__(self, work_root: Path, future_server: Future[RpcInterface]):
         self.work_root = work_root
-        aw_session = factory.anew(work_root)
-        aw_server = aget_session_server(aw_session, client, tg)
-        self._aw_session_server = tg.create_task(aw_server)
+        self._future_server = future_server
         loop = asyncio.get_running_loop()
         self._initialized_server: Future[RpcInterface | None] = loop.create_future()
 
-    async def aget_initialized_server(self) -> RpcInterface | None:
-        return await self._initialized_server
+    def aget_initialized_server(self) -> Future[RpcInterface | None]:
+        return self._initialized_server
 
     async def request_initialize(self, client_capabilities: LspObject) -> Response:
-        server = await self._aw_session_server
+        server = await self._future_server
         init_call = leank_init_call(self.work_root, client_capabilities)
         aw_response = await server.request(init_call)
         response = await aw_response
@@ -88,18 +73,37 @@ class SubLeank:
         return response
 
     async def initialized(self) -> RpcInterface | None:
-        session_server = await self._aw_session_server
+        session_server = await self._future_server
         if not self._initialized_server.done():
             await session_server.notify(MethodCall('initialized'))
             self._initialized_server.set_result(session_server)
         return self._initialized_server.result()
 
     def close(self) -> None:
-        if self._aw_session_server.done():
-            self._aw_session_server.result().close()
+        if self._future_server.done():
+            self._future_server.result().close()
         else:
             warn("LSP session closed before it could start")
-            self._aw_session_server.cancel()
+            self._future_server.cancel()
+
+
+class SubLeankFactory:
+    def __init__(self, factory: RpcSessionFactory, client: RpcInterface, tg: TaskGroup):
+        self._factory = factory
+        self._client = client
+        self._tg = tg
+
+    def new(self, work_dir: Path) -> SubLeank:
+        aw_session = self._factory.anew(work_dir)
+        aw_server = self._aget_session_server(aw_session)
+        aw_session_server = self._tg.create_task(aw_server)
+        return SubLeank(work_dir, aw_session_server)
+
+    async def _aget_session_server(
+        self, aw_session: Awaitable[RpcSession]
+    ) -> RpcInterface:
+        session = await aw_session
+        return session.start_server(self._client, self._tg)
 
 
 def document_method(mc: MethodCall) -> Path | None:
@@ -121,17 +125,10 @@ def pick_workspace_dir(doc_path: Path) -> Path:
 
 
 class LeankManager(RpcInterface):
-    def __init__(
-        self,
-        editor: RpcInterface,
-        factory: RpcSessionFactory,
-        tg: TaskGroup,
-    ):
-        self._editor = editor
-        self._leanks: list[SubLeank] = []
+    def __init__(self, factory: SubLeankFactory):
         self._factory = factory
-        self._tg = tg
         self._client_capabilities: LspObject = {}
+        self._leanks: list[SubLeank] = []
 
     def close(self) -> None:
         for leank in self._leanks:
@@ -172,7 +169,7 @@ class LeankManager(RpcInterface):
         self._client_capabilities = capabilities
 
     async def create_sub_leank(self, work_root: Path) -> tuple[SubLeank, Response]:
-        leank = SubLeank(work_root, self._factory, self._editor, self._tg)
+        leank = self._factory.new(work_root)
         self._leanks.append(leank)
         response = await leank.request_initialize(self._client_capabilities)
         return (leank, response)
@@ -217,7 +214,7 @@ def workspace_folders(client_init_params: LspObject) -> Iterator[Path]:
 class MultiLeankLspInitializer(LspInitializer):
     def __init__(self, factory: RpcSessionFactory, editor: RpcInterface, tg: TaskGroup):
         self._initializing: SubLeank | None = None
-        self._manager = LeankManager(editor, factory, tg)
+        self._manager = LeankManager(SubLeankFactory(factory, editor, tg))
         self._workspace_folders: list[Path] = []
 
     async def on_initialize(self, init_params: LspObject) -> Response:
