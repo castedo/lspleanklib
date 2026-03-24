@@ -267,6 +267,7 @@ async def test_bogus_stdin(caplog, capsys) -> None:
 @pytest.mark.parametrize("cmdline", [
     ["pylsp"],
     [sys.executable, "-m", "lspleanklib", "stdio", "--", "pylsp"],
+    [sys.executable, "-m", "lspleanklib.lakelspout", "stdio", "--", "pylsp"],
 ])
 async def test_sub_exec_pylsp(cmdline):
     proc = await asyncio.create_subprocess_exec(

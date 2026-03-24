@@ -19,6 +19,7 @@ from .jsonrpc import (
     RpcSession,
     future_error,
 )
+from lspleanklib.lake import LeankLakeSessionFactory
 from .server import (
     ChannelRpcSessionFactory,
     LspInitializer,
@@ -263,17 +264,24 @@ class LspLeankProgram(LspProgram):
     def __init__(self, cmd_line_args: list[str]):
         cli = argparse.ArgumentParser(prog='lspleank', description=__doc__)
         cli.add_argument('--version', action='version', version=version())
-        cli.add_argument('command', choices=['stdio'])
+        cli.add_argument('command', choices=['lake', 'stdio'])
 
         (cmd_line_args, self.extra_args) = split_cmd_line(cmd_line_args)
         cli.parse_args(cmd_line_args, self)
         if not self.extra_args:
-            self.extra_args = ['lake', 'serve']
+            match self.command:
+                case 'lake':
+                    self.extra_args = ['lake', 'serve']
+                case 'stdio':
+                    self.extra_args = ['lakelspout', 'stdio']
 
     async def aget_session(self, loop: AbstractEventLoop) -> LspSession:
         chan_factory = RpcSubprocessFactory(self.extra_args)
         sess_factory: RpcSessionFactory
-        sess_factory = ChannelRpcSessionFactory(chan_factory, loop)
+        if self.command == 'lake':
+            sess_factory = LeankLakeSessionFactory(chan_factory, loop)
+        else:
+            sess_factory = ChannelRpcSessionFactory(chan_factory, loop)
         return MultiLeankLspSession(sess_factory)
 
 
