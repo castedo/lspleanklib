@@ -30,7 +30,7 @@ LSP_SERVER_NAME = "lspleank"
 
 
 class RpcDirChannelFactory(typing.Protocol):
-    async def anew(self, work_dir: Path, loop: AbstractEventLoop) -> RpcChannel: ...
+    async def anew(self, work_root: Path, loop: AbstractEventLoop) -> RpcChannel: ...
 
 
 def text_doc_caps(init_params: LspObject) -> LspObject:
@@ -156,6 +156,32 @@ class RpcSubprocessFactory(RpcDirChannelFactory):
 
     async def anew(self, work_dir: Path, loop: AbstractEventLoop) -> RpcChannel:
         return await RpcSubprocess.anew(self._lsp_cmd, work_dir, loop)
+
+
+def get_socket_path(work_root: Path) -> Path | None:
+    if not hasattr(asyncio, 'open_unix_connection'):
+        return None
+    dir_socket = work_root / ".lspleank.sock"
+    if not dir_socket.exists():
+        xdg_dir = os.environ.get("XDG_RUNTIME_DIR")
+        if xdg_dir is not None:
+            dir_socket = Path(xdg_dir) / "lspleank.sock"
+    return dir_socket if dir_socket.exists() else None
+
+
+class RpcSocketFactory(RpcDirChannelFactory):
+    def __init__(self, default: RpcDirChannelFactory):
+        self._default = default
+
+    async def anew(self, work_root: Path, loop: AbstractEventLoop) -> RpcChannel:
+        sock_path = get_socket_path(work_root)
+        if sock_path is None:
+            return await self._default.anew(work_root, loop)
+        else:
+            assert loop == asyncio.get_running_loop()
+            (reader, writer) = await asyncio.open_unix_connection(sock_path)
+            aio = DuplexStream(reader, writer)
+            return JsonRpcChannel(aio, loop, 'socket')
 
 
 class LspSession(RpcSession, typing.Protocol):

@@ -26,6 +26,7 @@ from .server import (
     LspServer,
     LspSession,
     RpcSessionFactory,
+    RpcSocketFactory,
     RpcSubprocessFactory,
     async_stdio_main,
     leank_init_call,
@@ -274,7 +275,8 @@ class LspLeankProgram(LspProgram):
                     self.extra_args = ['lakelspout', 'stdio']
 
     async def aget_session(self, loop: AbstractEventLoop) -> LspSession:
-        chan_factory = RpcSubprocessFactory(self.extra_args)
+        subproc_factory = RpcSubprocessFactory(self.extra_args)
+        chan_factory = RpcSocketFactory(subproc_factory)
         sess_factory: RpcSessionFactory
         if self.command == 'lake':
             sess_factory = LeankLakeSessionFactory(chan_factory, loop)
