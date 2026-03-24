@@ -70,27 +70,25 @@ class LeankLakeLspInitializer(LspInitializer):
     async def on_initialize(self, init_params: LspObject) -> Response:
         if self._initializing:
             return Response.from_error_code(ErrorCodes.InvalidRequest)
-
         lsp_root = get_uri_path(init_params, 'rootUri')
         init_call = leank_init_call(lsp_root, text_doc_caps(init_params))
-
         aw_response = await self._channel.proxy.request(init_call)
         response = await aw_response
         if response.error is None:
             self._initializing = LeankInitializedServer(self._channel.proxy)
-            return leank_init_response(response.result)
         else:
             re = response.error
             log.error(f"LSP initialize response error {re.code}: {re.message}")
-            return response
+        return leank_init_response(response)
 
     async def do_initialized(self) -> RpcInterface | None:
-        ret = None
         if self._initializing:
-            ret = self._initializing
+            server = self._initializing
             self._initializing = None
-            await ret.notify(MethodCall('initialized'))
-        return ret
+            await server.notify(MethodCall('initialized'))
+            return server
+        else:
+            return None
 
     def close(self) -> None:
         if self._initializing:

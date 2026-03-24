@@ -22,7 +22,7 @@ from .jsonrpc import (
     RpcSession,
     future_error,
 )
-from .util import LspAny, LspObject, awaitable, get_obj, log
+from .util import LspObject, awaitable, get_obj, log
 
 
 LSP_CLIENT_NAME = "lspleank"
@@ -50,10 +50,12 @@ def leank_init_call(work_root: Path, capabilities: LspObject) -> MethodCall:
     )
 
 
-def leank_init_response(init_result: LspAny) -> Response:
-    if isinstance(init_result, dict):
+def leank_init_response(init_response: Response) -> Response:
+    if init_response.error is not None:
+        return init_response
+    if isinstance(init_response.result, dict):
         # TODO check and standardize server caps
-        server_caps = init_result.get('capabilities')
+        server_caps = init_response.result.get('capabilities')
         server_caps = server_caps if isinstance(server_caps, dict) else {}
     else:
         server_caps = {}

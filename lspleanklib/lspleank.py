@@ -3,10 +3,9 @@ Link LSP-enabled editors to Lake LSP servers
 """
 
 from __future__ import annotations
-import argparse, logging, sys
+import argparse, asyncio, logging, sys
 from asyncio import AbstractEventLoop, Future, TaskGroup
 from collections.abc import AsyncIterator, Awaitable, Iterator, Mapping, Sequence
-from dataclasses import dataclass
 from pathlib import Path
 from warnings import warn
 
@@ -61,17 +60,46 @@ async def aget_session_server(
     return session.start_server(client, tg)
 
 
-@dataclass
 class SubLeank:
-    work_root: Path
-    future_server: Future[RpcInterface]
+    def __init__(
+        self,
+        work_root: Path,
+        factory: RpcSessionFactory,
+        client: RpcInterface,
+        tg: TaskGroup,
+    ):
+        self.work_root = work_root
+        aw_session = factory.anew(work_root)
+        aw_server = aget_session_server(aw_session, client, tg)
+        self._aw_session_server = tg.create_task(aw_server)
+        loop = asyncio.get_running_loop()
+        self._initialized_server: Future[RpcInterface | None] = loop.create_future()
+
+    async def aget_initialized_server(self) -> RpcInterface | None:
+        return await self._initialized_server
+
+    async def request_initialize(self, client_capabilities: LspObject) -> Response:
+        server = await self._aw_session_server
+        init_call = leank_init_call(self.work_root, client_capabilities)
+        aw_response = await server.request(init_call)
+        response = await aw_response
+        if response.error is not None:
+            self._initialized_server.set_result(None)
+        return response
+
+    async def initialized(self) -> RpcInterface | None:
+        session_server = await self._aw_session_server
+        if not self._initialized_server.done():
+            await session_server.notify(MethodCall('initialized'))
+            self._initialized_server.set_result(session_server)
+        return self._initialized_server.result()
 
     def close(self) -> None:
-        if self.future_server.done():
-            self.future_server.result().close()
+        if self._aw_session_server.done():
+            self._aw_session_server.result().close()
         else:
             warn("LSP session closed before it could start")
-            self.future_server.cancel()
+            self._aw_session_server.cancel()
 
 
 def document_method(mc: MethodCall) -> Path | None:
@@ -104,9 +132,6 @@ class LeankManager(RpcInterface):
         self._factory = factory
         self._tg = tg
         self._client_capabilities: LspObject = {}
-
-    def add_leank(self, leank: SubLeank) -> None:
-        self._leanks.append(leank)
 
     def close(self) -> None:
         for leank in self._leanks:
@@ -143,41 +168,22 @@ class LeankManager(RpcInterface):
             warn(f"Unexpected request '{mc.method}'")
             return future_error(ErrorCodes.MethodNotFound)
 
-    def create_sub_leank(self, work_root: Path) -> SubLeank:
-        aw_session = self._factory.anew(work_root)
-        aw_server = aget_session_server(aw_session, self._editor, self._tg)
-        future_server = self._tg.create_task(aw_server)
-        return SubLeank(work_root, future_server)
-
     def set_client_capabilities(self, capabilities: LspObject) -> None:
         self._client_capabilities = capabilities
 
-    async def request_initialize(
-        self, work_root: Path, server: RpcInterface
-    ) -> Response:
-        init_call = leank_init_call(work_root, self._client_capabilities)
-        aw_response = await server.request(init_call)
-        return await aw_response
+    async def create_sub_leank(self, work_root: Path) -> tuple[SubLeank, Response]:
+        leank = SubLeank(work_root, self._factory, self._editor, self._tg)
+        self._leanks.append(leank)
+        response = await leank.request_initialize(self._client_capabilities)
+        return (leank, response)
 
     async def _get_server(self, doc_path: Path) -> RpcInterface | None:
         lake_dir = pick_workspace_dir(doc_path)
         for leank in self._leanks:
             if leank.work_root == lake_dir:
-                return await leank.future_server
-
-        leank = self.create_sub_leank(lake_dir)
-        self._leanks.append(leank)
-
-        server = await leank.future_server
-        # TODO a non initialize method call might be queue to send to server now
-        response = await self.request_initialize(lake_dir, server)
-        if response.error is None:
-            await server.notify(MethodCall('initialized'))
-            return server
-        else:
-            re = response.error
-            warn(f"LSP server initialize response error {re.code}: {re.message}")
-            return None
+                return await leank.aget_initialized_server()
+        (leank, response) = await self.create_sub_leank(lake_dir)
+        return await leank.initialized()
 
     async def _workspace_symbol(self, mc: MethodCall) -> Awaitable[Response]:
         result: list[LspAny] = []
@@ -194,7 +200,9 @@ class LeankManager(RpcInterface):
 
     async def _leank_servers(self) -> AsyncIterator[RpcInterface]:
         for session in self._leanks:
-            yield await session.future_server
+            server = await session.aget_initialized_server()
+            if server is not None:
+                yield server
 
 
 def workspace_folders(client_init_params: LspObject) -> Iterator[Path]:
@@ -215,30 +223,21 @@ class MultiLeankLspInitializer(LspInitializer):
     async def on_initialize(self, init_params: LspObject) -> Response:
         if self._initializing:
             return Response.from_error_code(ErrorCodes.InvalidRequest)
-
         # TODO warn when folders inconsistent with Lake workspaces
         self._workspace_folders.extend(workspace_folders(init_params))
-
         lsp_root = get_uri_path(init_params, 'rootUri')
         self._manager.set_client_capabilities(text_doc_caps(init_params))
-        leank = self._manager.create_sub_leank(lsp_root)
-
-        server = await leank.future_server
-        response = await self._manager.request_initialize(lsp_root, server)
-        if response.error is None:
-            self._initializing = leank
-        return leank_init_response(response.result)
+        (self._initializing, response) = await self._manager.create_sub_leank(lsp_root)
+        return leank_init_response(response)
 
     async def do_initialized(self) -> RpcInterface | None:
-        ret = None
         if self._initializing:
             leank = self._initializing
-            server = await leank.future_server
             self._initializing = None
-            ret = self._manager
-            ret.add_leank(leank)
-            await server.notify(MethodCall('initialized'))
-        return ret
+            await leank.initialized()
+            return self._manager
+        else:
+            return None
 
     def close(self) -> None:
         if self._initializing:
