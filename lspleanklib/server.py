@@ -3,7 +3,7 @@ Generic server code
 """
 
 from __future__ import annotations
-import abc, asyncio, os, sys, threading, typing
+import abc, asyncio, os, sys, signal, threading, typing
 from asyncio import AbstractEventLoop, TaskGroup, subprocess
 from collections.abc import Awaitable
 from pathlib import Path
@@ -287,6 +287,8 @@ class AsyncMainLoopThread(threading.Thread):
         asyncio.set_event_loop(self._loop)
         coro = self._aprog.amain(self._stdio, self._loop)
         self.retcode = self._loop.run_until_complete(coro)
+        if not self._stdio.ain.at_eof():
+            os.kill(os.getpid(), signal.SIGINT)
 
 
 def async_stdio_main(aprog: AsyncProgram) -> int:
