@@ -4,7 +4,7 @@ JSON-RPC for Language Server Protocol
 
 from __future__ import annotations
 import asyncio, enum, json, typing
-from asyncio import AbstractEventLoop, Future
+from asyncio import AbstractEventLoop, Future, TaskGroup
 from collections.abc import AsyncIterator, Awaitable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from typing import Any, TypeAlias
@@ -255,7 +255,7 @@ class JsonRpcDuplexChannel(RpcDuplexChannel):
         impl: implements the methods for RPC calls received on stream input
         """
         try:
-            async with asyncio.TaskGroup() as response_tasks:
+            async with TaskGroup() as response_tasks:
                 try:
                     async for msg in self._stream_jsonrpc():
                         if isinstance(msg.payload, Response):
@@ -281,3 +281,7 @@ class JsonRpcDuplexChannel(RpcDuplexChannel):
                 yield JsonRpcMsg.from_jsonrpc(msg)
             except ValueError as ex:
                 log.exception(ex)
+
+
+class RpcSession(typing.Protocol):
+    def start_server(self, client: RpcInterface, tg: TaskGroup) -> RpcInterface: ...

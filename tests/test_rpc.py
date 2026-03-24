@@ -15,7 +15,7 @@ from lspleanklib.jsonrpc import (
 from util import aio_xpipe
 
 
-class NotImplementedService(RpcInterface):
+class NotImplementedClient(RpcInterface):
     async def notify(self, mc: MethodCall) -> None:
         raise NotImplementedError
 
@@ -25,7 +25,7 @@ class NotImplementedService(RpcInterface):
     def close(self) -> None:
         pass
 
-class NullService(RpcInterface):
+class NullClient(RpcInterface):
     async def notify(self, mc: MethodCall) -> None:
         pass
 
@@ -42,7 +42,7 @@ async def test_response() -> None:
     async with aio_xpipe() as (local, remote):
         async with asyncio.TaskGroup() as tg:
             con = JsonRpcDuplexChannel(local, loop, 'local')
-            tg.create_task(con.pump(NotImplementedService()))
+            tg.create_task(con.pump(NotImplementedClient()))
             tbd = await con.proxy.request(MethodCall("do/thing", None), None)
             msg = await read_message(remote.ain)
             assert msg == {"jsonrpc":"2.0", "id": 1, "method": "do/thing", "params": None}
@@ -56,7 +56,7 @@ async def test_response_cancelled() -> None:
     async with aio_xpipe() as (local, remote):
         async with asyncio.TaskGroup() as tg:
             con = JsonRpcDuplexChannel(local, loop, 'local')
-            tg.create_task(con.pump(NotImplementedService()))
+            tg.create_task(con.pump(NotImplementedClient()))
             tbd = await con.proxy.request(MethodCall("do/thing", None), None)
             msg = await read_message(remote.ain)
             assert msg == {"jsonrpc":"2.0", "id": 1, "method": "do/thing", "params": None}
@@ -75,7 +75,7 @@ async def test_simple_serve() -> None:
     async with aio_xpipe() as (local, remote):
         async with asyncio.TaskGroup() as tg:
             con = JsonRpcDuplexChannel(local, loop, 'local')
-            tg.create_task(con.pump(NullService()))
+            tg.create_task(con.pump(NullClient()))
             await write_message(remote.aout, {"jsonrpc":"2.0", "id": 1, "method": "nothing"})
             msg = await read_message(remote.ain)
             assert msg == {"jsonrpc":"2.0", "id": 1, "result": None}

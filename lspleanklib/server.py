@@ -5,19 +5,24 @@ Generic server code
 from __future__ import annotations
 import abc, asyncio, os, sys, threading, typing
 from asyncio import AbstractEventLoop, TaskGroup, subprocess
+from collections.abc import Awaitable
 from pathlib import Path
+from warnings import warn
 from typing import Sequence
 
 from .aio import DuplexStream, ReadFilePump, WriterFileAdapter
 from .cli import version
 from .jsonrpc import (
+    ErrorCodes,
     JsonRpcDuplexChannel,
     MethodCall,
     Response,
     RpcDuplexChannel,
     RpcInterface,
+    RpcSession,
+    future_error,
 )
-from .util import LspObject, get_obj, log
+from .util import LspAny, LspObject, awaitable, get_obj, log
 
 
 LSP_CLIENT_NAME = "lspleank"
@@ -47,22 +52,70 @@ def leank_init_call(work_root: Path, capabilities: LspObject) -> MethodCall:
     )
 
 
-def leank_init_response(init_response: Response) -> Response:
-    if init_response.error is not None:
-        return init_response
+def leank_init_response(init_result: LspAny) -> Response:
+    if isinstance(init_result, dict):
+        # TODO check and standardize server caps
+        server_caps = init_result.get('capabilities')
+        server_caps = server_caps if isinstance(server_caps, dict) else {}
     else:
-        if isinstance(init_response.result, dict):
-            # TODO check and standardize server caps
-            server_caps = init_response.result.get('capabilities')
-            server_caps = server_caps if isinstance(server_caps, dict) else {}
-        else:
-            server_caps = {}
+        server_caps = {}
     return Response(
         {
             'capabilities': server_caps,
             'serverInfo': {'name': LSP_SERVER_NAME, 'version': version()},
         }
     )
+
+
+class LspInitializer(typing.Protocol):
+    async def on_initialize(self, init_params: LspObject) -> Response: ...
+    async def do_initialized(self) -> RpcInterface | None: ...
+    def close(self) -> None: ...
+
+
+class LspServer(RpcInterface):
+    def __init__(self, initializer: LspInitializer) -> None:
+        self._initialized: RpcInterface | None = None
+        self._initializer = initializer
+
+    def is_initialized(self) -> bool:
+        return self._initialized is not None
+
+    def close(self) -> None:
+        if self._initialized:
+            self._initialized.close()
+        self._initializer.close()
+
+    async def request(
+        self, mc: MethodCall, fix_id: str | None = None
+    ) -> Awaitable[Response]:
+        if mc.method == 'initialize':
+            init_params = mc.params if isinstance(mc.params, dict) else {}
+            if self._initialized is None:
+                response = await self._initializer.on_initialize(init_params)
+                return awaitable(response)
+            else:
+                return future_error(ErrorCodes.InvalidRequest)
+        elif self._initialized:
+            return await self._initialized.request(mc, fix_id)
+        else:
+            return future_error(ErrorCodes.ServerNotInitialized)
+
+    async def notify(self, mc: MethodCall) -> None:
+        got = f"Got '{mc.method}' notification"
+        if mc.method == 'initialized':
+            if self._initialized is None:
+                initialized = await self._initializer.do_initialized()
+                if initialized:
+                    self._initialized = initialized
+                else:
+                    warn(got + " without 'initialize' request success")
+            else:
+                warn(got + " when already initialized")
+        elif self._initialized:
+            await self._initialized.notify(mc)
+        else:
+            warn(got + " when not initialized")
 
 
 class RpcSubprocess(RpcDuplexChannel):
@@ -105,8 +158,31 @@ class RpcSubprocessFactory(RpcDirChannelFactory):
         return await RpcSubprocess.anew(self._lsp_cmd, work_dir, loop)
 
 
-class LspServer(RpcInterface, typing.Protocol):
-    def is_initialized(self) -> bool: ...
+class LspSession(RpcSession, typing.Protocol):
+    def was_initialized(self) -> bool: ...
+
+
+class ChannelRpcSession(RpcSession):
+    def __init__(self, channel: RpcDuplexChannel):
+        self._channel = channel
+
+    def start_server(self, client: RpcInterface, tg: TaskGroup) -> RpcInterface:
+        tg.create_task(self._channel.pump(client))
+        return self._channel.proxy
+
+
+class RpcSessionFactory(typing.Protocol):
+    async def anew(self, work_dir: Path) -> RpcSession: ...
+
+
+class ChannelRpcSessionFactory(RpcSessionFactory):
+    def __init__(self, factory: RpcDirChannelFactory, loop: AbstractEventLoop):
+        self._factory = factory
+        self._loop = loop
+
+    async def anew(self, work_dir: Path) -> RpcSession:
+        channel = await self._factory.anew(work_dir, self._loop)
+        return ChannelRpcSession(channel)
 
 
 class AsyncProgram(typing.Protocol):
@@ -114,22 +190,23 @@ class AsyncProgram(typing.Protocol):
 
 
 async def lsp_server_loop(
-    server: LspProgram, client: JsonRpcDuplexChannel, loop: AbstractEventLoop,
+    session: LspSession, client: JsonRpcDuplexChannel
 ) -> bool:
     async with TaskGroup() as tg:
-        server_proxy = server.start(client.proxy, loop, tg)
-        tg.create_task(client.pump(server_proxy))
-    return server_proxy.is_initialized()
+        server = session.start_server(client.proxy, tg)
+        tg.create_task(client.pump(server))
+    return session.was_initialized()
 
 
 class LspProgram:
     @abc.abstractmethod
-    def start(self, client: RpcInterface, loop: AbstractEventLoop, tg: TaskGroup) -> LspServer: ...
+    async def aget_session(self, loop: AbstractEventLoop) -> LspSession: ...
 
     async def amain(self, stdio: DuplexStream, loop: AbstractEventLoop) -> int:
         try:
             client_chan = JsonRpcDuplexChannel(stdio, loop, 'stdio')
-            ok = await lsp_server_loop(self, client_chan, loop)
+            session = await self.aget_session(loop)
+            ok = await lsp_server_loop(session, client_chan)
         except Exception as ex:
             log.exception(ex)
             return 1
