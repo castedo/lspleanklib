@@ -161,12 +161,20 @@ class RpcSubprocessFactory(RpcDirChannelFactory):
 def get_socket_path(work_root: Path) -> Path | None:
     if not hasattr(asyncio, 'open_unix_connection'):
         return None
-    dir_socket = work_root / ".lspleank.sock"
-    if not dir_socket.exists():
-        xdg_dir = os.environ.get("XDG_RUNTIME_DIR")
-        if xdg_dir is not None:
-            dir_socket = Path(xdg_dir) / "lspleank.sock"
-    return dir_socket if dir_socket.exists() else None
+    sock_path = work_root / ".lspleank.sock"
+    if not sock_path.exists():
+        xdg_dir = Path(os.environ.get("XDG_RUNTIME_DIR", "/tmp"))
+        sock_path = xdg_dir / "lspleank.sock"
+    return sock_path if sock_path.exists() else None
+
+
+async def create_rpc_socket_channel(
+    sock_path: Path, loop: AbstractEventLoop
+) -> RpcChannel:
+    assert loop == asyncio.get_running_loop()
+    (reader, writer) = await asyncio.open_unix_connection(sock_path)
+    aio = DuplexStream(reader, writer)
+    return JsonRpcChannel(aio, loop, 'socket')
 
 
 class RpcSocketFactory(RpcDirChannelFactory):
@@ -178,10 +186,35 @@ class RpcSocketFactory(RpcDirChannelFactory):
         if sock_path is None:
             return await self._default.anew(work_root, loop)
         else:
-            assert loop == asyncio.get_running_loop()
-            (reader, writer) = await asyncio.open_unix_connection(sock_path)
-            aio = DuplexStream(reader, writer)
-            return JsonRpcChannel(aio, loop, 'socket')
+            return await create_rpc_socket_channel(sock_path, loop)
+
+
+class RpcStartSocketFactory(RpcDirChannelFactory):
+    def __init__(self, start_cmd: Sequence[str]):
+        self._start_cmd = list(start_cmd)
+
+    async def anew(self, work_root: Path, loop: AbstractEventLoop) -> RpcChannel:
+        # ignoring work_root because user socket handles any work root
+        if not hasattr(asyncio, 'open_unix_connection'):
+            raise NotImplementedError("This system does not support UNIX sockets")
+        xdg_dir = Path(os.environ.get("XDG_RUNTIME_DIR", "/tmp"))
+        if not xdg_dir.exists():
+            raise RuntimeError("Unable to find XDG_RUNTIME_DIR")
+        sock_path = xdg_dir / "lspleank.sock"
+        if not sock_path.exists():
+            if not self._start_cmd:
+                raise RuntimeError("Missing lspleank user socket start command")
+            proc = await asyncio.create_subprocess_exec(
+                *self._start_cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE
+            )
+            await proc.communicate()
+            if proc.returncode != 0:
+                err = "Error exit code {} running {}"
+                raise RuntimeError(err.format(proc.returncode, self._start_cmd))
+            if not sock_path.exists():
+                err = "Failed to find {} after start command {}"
+                raise RuntimeError(err.format(sock_path, self._start_cmd))
+        return await create_rpc_socket_channel(sock_path, loop)
 
 
 class LspSession(RpcSession, typing.Protocol):

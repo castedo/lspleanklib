@@ -25,8 +25,10 @@ from .server import (
     LspProgram,
     LspServer,
     LspSession,
+    RpcDirChannelFactory,
     RpcSessionFactory,
     RpcSocketFactory,
+    RpcStartSocketFactory,
     RpcSubprocessFactory,
     async_stdio_main,
     leank_init_call,
@@ -261,9 +263,16 @@ class LspLeankProgram(LspProgram):
     extra_args: list[str]
 
     def __init__(self, cmd_line_args: list[str]):
-        cli = argparse.ArgumentParser(prog='lspleank', description=__doc__)
+        cli = argparse.ArgumentParser(
+            prog='lspleank',
+            usage=(
+                "%(prog)s  [-h] [--version] {connect,lake,stdio}"
+                " [-- external_command ...]"
+            ),
+            description=__doc__,
+        )
         cli.add_argument('--version', action='version', version=version())
-        cli.add_argument('command', choices=['lake', 'stdio'])
+        cli.add_argument('command', choices=['connect', 'lake', 'stdio'])
 
         (cmd_line_args, self.extra_args) = split_cmd_line(cmd_line_args)
         cli.parse_args(cmd_line_args, self)
@@ -275,8 +284,12 @@ class LspLeankProgram(LspProgram):
                     self.extra_args = ['lakelspout', 'stdio']
 
     async def aget_session(self, loop: AbstractEventLoop) -> LspSession:
-        subproc_factory = RpcSubprocessFactory(self.extra_args)
-        chan_factory = RpcSocketFactory(subproc_factory)
+        default_factory: RpcDirChannelFactory
+        if self.command == 'connect':
+            default_factory = RpcStartSocketFactory(self.extra_args)
+        else:
+            default_factory = RpcSubprocessFactory(self.extra_args)
+        chan_factory = RpcSocketFactory(default_factory)
         sess_factory: RpcSessionFactory
         if self.command == 'lake':
             sess_factory = LeankLakeSessionFactory(chan_factory, loop)
