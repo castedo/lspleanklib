@@ -34,15 +34,23 @@ class StdioProgram(LspProgram):
 
 
 class LeankLakeConnection:
-    def __init__(self, factory: RpcDirChannelFactory, tg: asyncio.TaskGroup):
+    def __init__(
+        self, factory: RpcDirChannelFactory, tg: asyncio.TaskGroup, sock_path: Path
+    ):
         self._factory = factory
         self._tg = tg
         self._loop = asyncio.get_running_loop()
+        self._sock_path = sock_path
+        self._connected = False
 
     def on_connect(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
-        print("Socket connected")
+        if self._connected:
+            print(f"Editor is already connected to Lake workspace {self._sock_path}")
+            return
+        self._connected = True
+        print(f"Editor connected to {self._sock_path}")
         aio = DuplexStream(reader, writer)
         sock_chan = JsonRpcChannel(aio, self._loop, 'socket')
         self._tg.create_task(self._async_on_connect(sock_chan))
@@ -54,7 +62,9 @@ class LeankLakeConnection:
                 tg.create_task(sock_chan.pump(server))
         except Exception as ex:
             print(ex, file=sys.stderr)
-        print("LSP server done")
+        finally:
+            self._connected = False
+            print(f"Editor disconnected from {self._sock_path}")
 
 
 class WorkProgram(AsyncProgram):
@@ -76,7 +86,7 @@ class WorkProgram(AsyncProgram):
             async with asyncio.TaskGroup() as tg:
                 lake_factory = RpcSubprocessFactory(self._lake_cmd, loop)
                 leank_factory = LeankLakeFactory(lake_factory)
-                session = LeankLakeConnection(leank_factory, tg)
+                session = LeankLakeConnection(leank_factory, tg, sock_path)
                 socket_server = await asyncio.start_unix_server(
                     session.on_connect, sock_path, backlog=1
                 )
@@ -86,6 +96,7 @@ class WorkProgram(AsyncProgram):
                     socket_server.close()
                     print("Waiting for connections to finish...", flush=True)
                     await socket_server.wait_closed()
+                    print("Connections done.", flush=True)
         except Exception as ex:
             print(ex, file=sys.stderr)
             return 1
