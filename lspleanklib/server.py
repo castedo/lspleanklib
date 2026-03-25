@@ -249,7 +249,7 @@ class AsyncProgram(typing.Protocol):
     def on_stdin_eof(self) -> None: ...
 
 
-async def lsp_server_loop(session: LspSession, client: JsonRpcChannel) -> bool:
+async def lsp_server_loop(session: LspSession, client: RpcChannel) -> bool:
     async with TaskGroup() as tg:
         server = session.start_server(client.proxy, tg)
         tg.create_task(client.pump(server))

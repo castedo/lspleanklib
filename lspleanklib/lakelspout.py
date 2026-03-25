@@ -9,7 +9,7 @@ from pathlib import Path
 
 from .aio import DuplexStream
 from .cli import split_cmd_line, version
-from .jsonrpc import JsonRpcChannel
+from .jsonrpc import JsonRpcChannel, RpcChannel
 from .lake import LeankLakeSession
 from .server import (
     AsyncProgram,
@@ -23,16 +23,39 @@ from .server import (
 
 class StdioProgram(LspProgram):
     def __init__(self, lake_cmd: list[str]):
-        self.lake_cmd = lake_cmd
+        self._lake_cmd = lake_cmd
 
     async def aget_session(self, loop: AbstractEventLoop) -> LspSession:
-        lake_chan = await RpcSubprocess.anew(self.lake_cmd, Path.cwd(), loop)
+        lake_chan = await RpcSubprocess.anew(self._lake_cmd, Path.cwd(), loop)
         return LeankLakeSession(lake_chan)
+
+
+class LeankLakeConnection:
+    def __init__(self, lake_cmd: list[str], tg: asyncio.TaskGroup):
+        self._lake_cmd = lake_cmd
+        self._tg = tg
+        self._loop = asyncio.get_running_loop()
+
+    def on_connect(
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
+        print("Socket connected")
+        aio = DuplexStream(reader, writer)
+        sock_chan = JsonRpcChannel(aio, self._loop, 'socket')
+        self._tg.create_task(self._async_on_connect(sock_chan))
+
+    async def _async_on_connect(self, sock_chan: RpcChannel) -> None:
+        lake_chan = await RpcSubprocess.anew(self._lake_cmd, Path.cwd(), self._loop)
+        try:
+            await lsp_server_loop(LeankLakeSession(lake_chan), sock_chan)
+        except Exception as ex:
+            print(ex, file=sys.stderr)
+        print("LSP server done")
 
 
 class WorkProgram(AsyncProgram):
     def __init__(self, lake_cmd: list[str]):
-        self.lake_cmd = lake_cmd
+        self._lake_cmd = lake_cmd
         self._stdin_eof = asyncio.Event()
 
     async def amain(self, stdio: DuplexStream, loop: AbstractEventLoop) -> int:
@@ -46,12 +69,17 @@ class WorkProgram(AsyncProgram):
             return 1
         print("Press CTRL-D (EOF) to stop waiting for new connections ...", flush=True)
         try:
-            socket_server = await asyncio.start_unix_server(
-                self._on_connect, sock_path, backlog=1
-            )
-            async with socket_server:
-                print(f"Listening on {sock_path}...", flush=True)
-                await self._stdin_eof.wait()
+            async with asyncio.TaskGroup() as tg:
+                session = LeankLakeConnection(self._lake_cmd, tg)
+                socket_server = await asyncio.start_unix_server(
+                    session.on_connect, sock_path, backlog=1
+                )
+                async with socket_server:
+                    print(f"Listening on {sock_path}...", flush=True)
+                    await self._stdin_eof.wait()
+                    socket_server.close()
+                    print("Waiting for connections to finish...", flush=True)
+                    await socket_server.wait_closed()
         except Exception as ex:
             print(ex, file=sys.stderr)
             return 1
@@ -62,21 +90,6 @@ class WorkProgram(AsyncProgram):
 
     def on_stdin_eof(self) -> None:
         self._stdin_eof.set()
-
-    async def _on_connect(
-        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
-    ) -> None:
-        print("Socket connected")
-        aio = DuplexStream(reader, writer)
-        loop = asyncio.get_running_loop()
-        sock_chan = JsonRpcChannel(aio, loop, 'socket')
-        lake_chan = await RpcSubprocess.anew(self.lake_cmd, Path.cwd(), loop)
-        session = LeankLakeSession(lake_chan)
-        try:
-            await lsp_server_loop(session, sock_chan)
-        except Exception as ex:
-            print(ex, file=sys.stderr)
-        print("LSP server loop done")
 
 
 def main(cmd_line_args: list[str] | None = None) -> int:
@@ -94,10 +107,10 @@ def main(cmd_line_args: list[str] | None = None) -> int:
 
     aprog: AsyncProgram
     match args.command:
-        case 'stdio':
-            aprog = StdioProgram(extra_args)
         case 'work':
             aprog = WorkProgram(extra_args)
+        case 'stdio':
+            aprog = StdioProgram(extra_args)
     return async_stdio_main(aprog)
 
 
