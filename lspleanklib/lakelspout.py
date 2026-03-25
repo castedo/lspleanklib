@@ -3,21 +3,22 @@ Adapt Lake LSP server to be a Leank LSP server
 """
 
 import asyncio, argparse, logging, os, sys
-from asyncio import AbstractEventLoop
+from asyncio import AbstractEventLoop, TaskGroup
 from contextlib import suppress
 from pathlib import Path
 
 from .aio import DuplexStream
 from .cli import split_cmd_line, version
-from .jsonrpc import JsonRpcChannel, RpcChannel
-from .lake import LeankLakeSession
+from .jsonrpc import JsonRpcChannel, RpcChannel, RpcInterface
+from .lake import LeankLakeFactory
 from .server import (
     AsyncProgram,
     LspProgram,
-    LspSession,
-    RpcSubprocess,
+    LspServer,
+    RpcDirChannelFactory,
+    RpcSubprocessFactory,
     async_stdio_main,
-    lsp_server_loop,
+    channel_lsp_server,
 )
 
 
@@ -25,14 +26,16 @@ class StdioProgram(LspProgram):
     def __init__(self, lake_cmd: list[str]):
         self._lake_cmd = lake_cmd
 
-    async def aget_session(self, loop: AbstractEventLoop) -> LspSession:
-        lake_chan = await RpcSubprocess.anew(self._lake_cmd, Path.cwd(), loop)
-        return LeankLakeSession(lake_chan)
+    async def start_server(self, client: RpcInterface, tg: TaskGroup) -> LspServer:
+        loop = asyncio.get_running_loop()
+        lake_factory = RpcSubprocessFactory(self._lake_cmd, loop)
+        leank_factory = LeankLakeFactory(lake_factory)
+        return channel_lsp_server(leank_factory, client, tg)
 
 
 class LeankLakeConnection:
-    def __init__(self, lake_cmd: list[str], tg: asyncio.TaskGroup):
-        self._lake_cmd = lake_cmd
+    def __init__(self, factory: RpcDirChannelFactory, tg: asyncio.TaskGroup):
+        self._factory = factory
         self._tg = tg
         self._loop = asyncio.get_running_loop()
 
@@ -45,9 +48,10 @@ class LeankLakeConnection:
         self._tg.create_task(self._async_on_connect(sock_chan))
 
     async def _async_on_connect(self, sock_chan: RpcChannel) -> None:
-        lake_chan = await RpcSubprocess.anew(self._lake_cmd, Path.cwd(), self._loop)
         try:
-            await lsp_server_loop(LeankLakeSession(lake_chan), sock_chan)
+            async with TaskGroup() as tg:
+                server = channel_lsp_server(self._factory, sock_chan.proxy, tg)
+                tg.create_task(sock_chan.pump(server))
         except Exception as ex:
             print(ex, file=sys.stderr)
         print("LSP server done")
@@ -70,7 +74,9 @@ class WorkProgram(AsyncProgram):
         print("Press CTRL-D (EOF) to stop waiting for new connections ...", flush=True)
         try:
             async with asyncio.TaskGroup() as tg:
-                session = LeankLakeConnection(self._lake_cmd, tg)
+                lake_factory = RpcSubprocessFactory(self._lake_cmd, loop)
+                leank_factory = LeankLakeFactory(lake_factory)
+                session = LeankLakeConnection(leank_factory, tg)
                 socket_server = await asyncio.start_unix_server(
                     session.on_connect, sock_path, backlog=1
                 )

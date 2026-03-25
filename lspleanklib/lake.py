@@ -2,7 +2,6 @@
 Code for the Lake LSP server
 """
 
-from asyncio import AbstractEventLoop, TaskGroup
 from collections.abc import Awaitable
 from pathlib import Path
 
@@ -12,20 +11,15 @@ from .jsonrpc import (
     Response,
     RpcChannel,
     RpcInterface,
-    RpcSession,
     future_error,
 )
 from .server import (
-    LspInitializer,
-    LspServer,
-    LspSession,
     RpcDirChannelFactory,
-    RpcSessionFactory,
     leank_init_call,
     leank_init_response,
     text_doc_caps,
 )
-from .util import LspObject, get_uri_path, log
+from .util import awaitable, get_uri_path
 
 
 class LakeClient(RpcInterface):
@@ -46,7 +40,7 @@ class LakeClient(RpcInterface):
         return await self.client.request(mc, fix_id)
 
 
-class LeankInitializedServer(RpcInterface):
+class LeankServer(RpcInterface):
     def __init__(self, lake_server: RpcInterface):
         self._lake_server = lake_server
 
@@ -59,59 +53,34 @@ class LeankInitializedServer(RpcInterface):
     async def request(
         self, mc: MethodCall, fix_id: str | None = None
     ) -> Awaitable[Response]:
-        return await self._lake_server.request(mc, fix_id)
-
-
-class LeankLakeLspInitializer(LspInitializer):
-    def __init__(self, channel: RpcChannel):
-        self._channel = channel
-        self._initializing: RpcInterface | None = None
-
-    async def on_initialize(self, init_params: LspObject) -> Response:
-        if self._initializing:
-            return Response.from_error_code(ErrorCodes.InvalidRequest)
-        lsp_root = get_uri_path(init_params, 'rootUri')
-        init_call = leank_init_call(lsp_root, text_doc_caps(init_params))
-        aw_response = await self._channel.proxy.request(init_call)
-        response = await aw_response
-        if response.error is None:
-            self._initializing = LeankInitializedServer(self._channel.proxy)
+        if mc.method != "initialized":
+            return await self._lake_server.request(mc)
         else:
-            re = response.error
-            log.error(f"LSP initialize response error {re.code}: {re.message}")
-        return leank_init_response(response)
-
-    async def do_initialized(self) -> RpcInterface | None:
-        if self._initializing:
-            server = self._initializing
-            self._initializing = None
-            await server.notify(MethodCall('initialized'))
-            return server
-        else:
-            return None
-
-    def close(self) -> None:
-        if self._initializing:
-            self._initializing.close()
+            init_params = mc.params if isinstance(mc.params, dict) else {}
+            lsp_root = get_uri_path(init_params, 'rootUri')
+            init_call = leank_init_call(lsp_root, text_doc_caps(init_params))
+            aw_response = await self._lake_server.request(init_call)
+            response = await aw_response
+            return awaitable(leank_init_response(response))
 
 
-class LeankLakeSession(LspSession):
-    def __init__(self, channel: RpcChannel):
-        self._channel = channel
-        self._server = LspServer(LeankLakeLspInitializer(channel))
+class LeankLakeChannel(RpcChannel):
+    def __init__(self, lake_channel: RpcChannel):
+        self._lake_channel = lake_channel
+        self._leank_server = LeankServer(lake_channel.proxy)
 
-    def start_server(self, client: RpcInterface, tg: TaskGroup) -> RpcInterface:
-        tg.create_task(self._channel.pump(LakeClient(client)))
-        return self._server
+    @property
+    def proxy(self) -> RpcInterface:
+        return self._leank_server
 
-    def was_initialized(self) -> bool:
-        return self._server.is_initialized()
+    async def pump(self, leank_client: RpcInterface) -> None:
+        await self._lake_channel.pump(LakeClient(leank_client))
 
 
-class LeankLakeSessionFactory(RpcSessionFactory):
+class LeankLakeFactory(RpcDirChannelFactory):
     def __init__(self, lake_factory: RpcDirChannelFactory):
         self._lake_factory = lake_factory
 
-    async def anew(self, work_dir: Path) -> RpcSession:
-        chan = await self._lake_factory.anew(work_dir)
-        return LeankLakeSession(chan)
+    async def anew(self, work_root: Path) -> RpcChannel:
+        lake_channel = await self._lake_factory.anew(work_root)
+        return LeankLakeChannel(lake_channel)

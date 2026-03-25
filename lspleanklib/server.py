@@ -19,10 +19,9 @@ from .jsonrpc import (
     Response,
     RpcChannel,
     RpcInterface,
-    RpcSession,
     future_error,
 )
-from .util import LspObject, awaitable, get_obj, log
+from .util import LspObject, awaitable, get_obj, get_uri_path, log
 
 
 LSP_CLIENT_NAME = "lspleank"
@@ -78,7 +77,7 @@ class LspServer(RpcInterface):
         self._initialized: RpcInterface | None = None
         self._initializer = initializer
 
-    def is_initialized(self) -> bool:
+    def was_initialized(self) -> bool:
         return self._initialized is not None
 
     def close(self) -> None:
@@ -220,30 +219,49 @@ class RpcStartSocketFactory(RpcDirChannelFactory):
         return await create_rpc_socket_channel(sock_path, self._loop)
 
 
-class LspSession(RpcSession, typing.Protocol):
-    def was_initialized(self) -> bool: ...
-
-
-class ChannelRpcSession(RpcSession):
-    def __init__(self, channel: RpcChannel):
-        self._channel = channel
-
-    def start_server(self, client: RpcInterface, tg: TaskGroup) -> RpcInterface:
-        tg.create_task(self._channel.pump(client))
-        return self._channel.proxy
-
-
-class RpcSessionFactory(typing.Protocol):
-    async def anew(self, work_dir: Path) -> RpcSession: ...
-
-
-class ChannelRpcSessionFactory(RpcSessionFactory):
-    def __init__(self, factory: RpcDirChannelFactory):
+class ChannelLspInitializer(LspInitializer):
+    def __init__(
+        self, factory: RpcDirChannelFactory, client: RpcInterface, tg: TaskGroup
+    ):
         self._factory = factory
+        self._client = client
+        self._tg = tg
+        self._initializing: RpcInterface | None = None
 
-    async def anew(self, work_dir: Path) -> RpcSession:
-        channel = await self._factory.anew(work_dir)
-        return ChannelRpcSession(channel)
+    async def on_initialize(self, init_params: LspObject) -> Response:
+        if self._initializing:
+            return Response.from_error_code(ErrorCodes.InvalidRequest)
+        lsp_root = get_uri_path(init_params, 'rootUri')
+        init_call = leank_init_call(lsp_root, text_doc_caps(init_params))
+        channel = await self._factory.anew(lsp_root)
+        self._tg.create_task(channel.pump(self._client))
+        aw_response = await channel.proxy.request(init_call)
+        response = await aw_response
+        if response.error is None:
+            self._initializing = channel.proxy
+        else:
+            re = response.error
+            log.error(f"LSP initialize response error {re.code}: {re.message}")
+        return response
+
+    async def do_initialized(self) -> RpcInterface | None:
+        if self._initializing:
+            server = self._initializing
+            self._initializing = None
+            await server.notify(MethodCall('initialized'))
+            return server
+        else:
+            return None
+
+    def close(self) -> None:
+        if self._initializing:
+            self._initializing.close()
+
+
+def channel_lsp_server(
+    factory: RpcDirChannelFactory, client: RpcInterface, tg: TaskGroup
+) -> LspServer:
+    return LspServer(ChannelLspInitializer(factory, client, tg))
 
 
 class AsyncProgram(typing.Protocol):
@@ -251,22 +269,17 @@ class AsyncProgram(typing.Protocol):
     def on_stdin_eof(self) -> None: ...
 
 
-async def lsp_server_loop(session: LspSession, client: RpcChannel) -> bool:
-    async with TaskGroup() as tg:
-        server = session.start_server(client.proxy, tg)
-        tg.create_task(client.pump(server))
-    return session.was_initialized()
-
-
-class LspProgram:
+class LspProgram(AsyncProgram):
     @abc.abstractmethod
-    async def aget_session(self, loop: AbstractEventLoop) -> LspSession: ...
+    async def start_server(self, client: RpcInterface, tg: TaskGroup) -> LspServer: ...
 
     async def amain(self, stdio: DuplexStream, loop: AbstractEventLoop) -> int:
         try:
             client_chan = JsonRpcChannel(stdio, loop, 'stdio')
-            session = await self.aget_session(loop)
-            ok = await lsp_server_loop(session, client_chan)
+            async with TaskGroup() as tg:
+                server = await self.start_server(client_chan.proxy, tg)
+                tg.create_task(client_chan.pump(server))
+            ok = server.was_initialized()
         except Exception as ex:
             log.exception(ex)
             return 1

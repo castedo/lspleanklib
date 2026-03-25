@@ -4,7 +4,7 @@ Link LSP-enabled editors to Lake LSP servers
 
 from __future__ import annotations
 import argparse, asyncio, logging, sys
-from asyncio import AbstractEventLoop, Future, TaskGroup
+from asyncio import Future, TaskGroup
 from collections.abc import AsyncIterator, Awaitable, Iterator, Mapping, Sequence
 from pathlib import Path
 from warnings import warn
@@ -14,19 +14,16 @@ from .jsonrpc import (
     ErrorCodes,
     MethodCall,
     Response,
+    RpcChannel,
     RpcInterface,
-    RpcSession,
     future_error,
 )
-from lspleanklib.lake import LeankLakeSessionFactory
+from lspleanklib.lake import LeankLakeFactory
 from .server import (
-    ChannelRpcSessionFactory,
     LspInitializer,
     LspProgram,
     LspServer,
-    LspSession,
     RpcDirChannelFactory,
-    RpcSessionFactory,
     RpcSocketFactory,
     RpcStartSocketFactory,
     RpcSubprocessFactory,
@@ -91,22 +88,23 @@ class SubLeank:
 
 
 class SubLeankFactory:
-    def __init__(self, factory: RpcSessionFactory, client: RpcInterface, tg: TaskGroup):
+    def __init__(
+        self, factory: RpcDirChannelFactory, client: RpcInterface, tg: TaskGroup
+    ):
         self._factory = factory
         self._client = client
         self._tg = tg
 
     def new(self, work_dir: Path) -> SubLeank:
-        aw_session = self._factory.anew(work_dir)
-        aw_server = self._aget_session_server(aw_session)
-        aw_session_server = self._tg.create_task(aw_server)
-        return SubLeank(work_dir, aw_session_server)
+        aw_channel = self._factory.anew(work_dir)
+        aw_server = self._pump_channel(aw_channel)
+        future_server = self._tg.create_task(aw_server)
+        return SubLeank(work_dir, future_server)
 
-    async def _aget_session_server(
-        self, aw_session: Awaitable[RpcSession]
-    ) -> RpcInterface:
-        session = await aw_session
-        return session.start_server(self._client, self._tg)
+    async def _pump_channel(self, aw_channel: Awaitable[RpcChannel]) -> RpcInterface:
+        channel = await aw_channel
+        self._tg.create_task(channel.pump(self._client))
+        return channel.proxy
 
 
 def document_method(mc: MethodCall) -> Path | None:
@@ -215,7 +213,9 @@ def workspace_folders(client_init_params: LspObject) -> Iterator[Path]:
 
 
 class MultiLeankLspInitializer(LspInitializer):
-    def __init__(self, factory: RpcSessionFactory, editor: RpcInterface, tg: TaskGroup):
+    def __init__(
+        self, factory: RpcDirChannelFactory, editor: RpcInterface, tg: TaskGroup
+    ):
         self._initializing: SubLeank | None = None
         self._manager = LeankManager(SubLeankFactory(factory, editor, tg))
         self._workspace_folders: list[Path] = []
@@ -244,18 +244,10 @@ class MultiLeankLspInitializer(LspInitializer):
             self._initializing.close()
 
 
-class MultiLeankLspSession(LspSession):
-    def __init__(self, factory: RpcSessionFactory):
-        self._factory = factory
-        self._started: LspServer | None = None
-
-    def start_server(self, editor: RpcInterface, tg: TaskGroup) -> RpcInterface:
-        initializer = MultiLeankLspInitializer(self._factory, editor, tg)
-        self._started = LspServer(initializer)
-        return self._started
-
-    def was_initialized(self) -> bool:
-        return self._started is not None and self._started.is_initialized()
+def multi_leank_lsp_server(
+    factory: RpcDirChannelFactory, editor: RpcInterface, tg: TaskGroup
+) -> LspServer:
+    return LspServer(MultiLeankLspInitializer(factory, editor, tg))
 
 
 class LspLeankProgram(LspProgram):
@@ -283,19 +275,18 @@ class LspLeankProgram(LspProgram):
                 case 'stdio':
                     self.extra_args = ['lakelspout', 'stdio']
 
-    async def aget_session(self, loop: AbstractEventLoop) -> LspSession:
+    async def start_server(self, editor: RpcInterface, tg: TaskGroup) -> LspServer:
+        loop = asyncio.get_running_loop()
         default_factory: RpcDirChannelFactory
         if self.command == 'connect':
             default_factory = RpcStartSocketFactory(self.extra_args, loop)
         else:
             default_factory = RpcSubprocessFactory(self.extra_args, loop)
+        chan_factory: RpcDirChannelFactory
         chan_factory = RpcSocketFactory(default_factory, loop)
-        sess_factory: RpcSessionFactory
         if self.command == 'lake':
-            sess_factory = LeankLakeSessionFactory(chan_factory)
-        else:
-            sess_factory = ChannelRpcSessionFactory(chan_factory)
-        return MultiLeankLspSession(sess_factory)
+            chan_factory = LeankLakeFactory(chan_factory)
+        return multi_leank_lsp_server(chan_factory, editor, tg)
 
 
 def main(cmd_line_args: list[str] | None = None) -> int:

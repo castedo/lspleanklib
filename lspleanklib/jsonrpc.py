@@ -295,7 +295,3 @@ class JsonRpcChannel(RpcChannel):
                 yield JsonRpcMsg.from_jsonrpc(msg)
             except ValueError as ex:
                 log.exception(ex)
-
-
-class RpcSession(typing.Protocol):
-    def start_server(self, client: RpcInterface, tg: TaskGroup) -> RpcInterface: ...
