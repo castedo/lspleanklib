@@ -86,8 +86,8 @@ class MockEditor(RpcInterface):
 
 async def ok_server_loop(stdio: DuplexStream, cmd_line) -> bool:
     loop = asyncio.get_running_loop()
-    lake_factory = RpcSubprocessFactory(cmd_line)
-    sess_factory = LeankLakeSessionFactory(lake_factory, loop)
+    lake_factory = RpcSubprocessFactory(cmd_line, loop)
+    sess_factory = LeankLakeSessionFactory(lake_factory)
     session = MultiLeankLspSession(sess_factory)
     client_chan = JsonRpcChannel(stdio, loop, 'stdio')
     return await lsp_server_loop(session, client_chan)

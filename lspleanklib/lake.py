@@ -109,10 +109,9 @@ class LeankLakeSession(LspSession):
 
 
 class LeankLakeSessionFactory(RpcSessionFactory):
-    def __init__(self, lake_factory: RpcDirChannelFactory, loop: AbstractEventLoop):
+    def __init__(self, lake_factory: RpcDirChannelFactory):
         self._lake_factory = lake_factory
-        self._loop = loop
 
     async def anew(self, work_dir: Path) -> RpcSession:
-        chan = await self._lake_factory.anew(work_dir, self._loop)
+        chan = await self._lake_factory.anew(work_dir)
         return LeankLakeSession(chan)

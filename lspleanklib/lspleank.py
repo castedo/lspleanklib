@@ -286,15 +286,15 @@ class LspLeankProgram(LspProgram):
     async def aget_session(self, loop: AbstractEventLoop) -> LspSession:
         default_factory: RpcDirChannelFactory
         if self.command == 'connect':
-            default_factory = RpcStartSocketFactory(self.extra_args)
+            default_factory = RpcStartSocketFactory(self.extra_args, loop)
         else:
-            default_factory = RpcSubprocessFactory(self.extra_args)
-        chan_factory = RpcSocketFactory(default_factory)
+            default_factory = RpcSubprocessFactory(self.extra_args, loop)
+        chan_factory = RpcSocketFactory(default_factory, loop)
         sess_factory: RpcSessionFactory
         if self.command == 'lake':
-            sess_factory = LeankLakeSessionFactory(chan_factory, loop)
+            sess_factory = LeankLakeSessionFactory(chan_factory)
         else:
-            sess_factory = ChannelRpcSessionFactory(chan_factory, loop)
+            sess_factory = ChannelRpcSessionFactory(chan_factory)
         return MultiLeankLspSession(sess_factory)
 
 

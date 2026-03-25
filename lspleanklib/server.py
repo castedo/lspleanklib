@@ -30,7 +30,7 @@ LSP_SERVER_NAME = "lspleank"
 
 
 class RpcDirChannelFactory(typing.Protocol):
-    async def anew(self, work_root: Path, loop: AbstractEventLoop) -> RpcChannel: ...
+    async def anew(self, work_root: Path) -> RpcChannel: ...
 
 
 def text_doc_caps(init_params: LspObject) -> LspObject:
@@ -151,11 +151,12 @@ class RpcSubprocess(RpcChannel):
 
 
 class RpcSubprocessFactory(RpcDirChannelFactory):
-    def __init__(self, lsp_cmd: list[str]):
+    def __init__(self, lsp_cmd: list[str], loop: AbstractEventLoop):
         self._lsp_cmd = lsp_cmd
+        self._loop = loop
 
-    async def anew(self, work_dir: Path, loop: AbstractEventLoop) -> RpcChannel:
-        return await RpcSubprocess.anew(self._lsp_cmd, work_dir, loop)
+    async def anew(self, work_dir: Path) -> RpcChannel:
+        return await RpcSubprocess.anew(self._lsp_cmd, work_dir, self._loop)
 
 
 def get_socket_path(work_root: Path) -> Path | None:
@@ -178,22 +179,24 @@ async def create_rpc_socket_channel(
 
 
 class RpcSocketFactory(RpcDirChannelFactory):
-    def __init__(self, default: RpcDirChannelFactory):
+    def __init__(self, default: RpcDirChannelFactory, loop: AbstractEventLoop):
         self._default = default
+        self._loop = loop
 
-    async def anew(self, work_root: Path, loop: AbstractEventLoop) -> RpcChannel:
+    async def anew(self, work_root: Path) -> RpcChannel:
         sock_path = get_socket_path(work_root)
         if sock_path is None:
-            return await self._default.anew(work_root, loop)
+            return await self._default.anew(work_root)
         else:
-            return await create_rpc_socket_channel(sock_path, loop)
+            return await create_rpc_socket_channel(sock_path, self._loop)
 
 
 class RpcStartSocketFactory(RpcDirChannelFactory):
-    def __init__(self, start_cmd: Sequence[str]):
+    def __init__(self, start_cmd: Sequence[str], loop: AbstractEventLoop):
         self._start_cmd = list(start_cmd)
+        self._loop = loop
 
-    async def anew(self, work_root: Path, loop: AbstractEventLoop) -> RpcChannel:
+    async def anew(self, work_root: Path) -> RpcChannel:
         # ignoring work_root because user socket handles any work root
         if not hasattr(asyncio, 'open_unix_connection'):
             raise NotImplementedError("This system does not support UNIX sockets")
@@ -214,7 +217,7 @@ class RpcStartSocketFactory(RpcDirChannelFactory):
             if not sock_path.exists():
                 err = "Failed to find {} after start command {}"
                 raise RuntimeError(err.format(sock_path, self._start_cmd))
-        return await create_rpc_socket_channel(sock_path, loop)
+        return await create_rpc_socket_channel(sock_path, self._loop)
 
 
 class LspSession(RpcSession, typing.Protocol):
@@ -235,12 +238,11 @@ class RpcSessionFactory(typing.Protocol):
 
 
 class ChannelRpcSessionFactory(RpcSessionFactory):
-    def __init__(self, factory: RpcDirChannelFactory, loop: AbstractEventLoop):
+    def __init__(self, factory: RpcDirChannelFactory):
         self._factory = factory
-        self._loop = loop
 
     async def anew(self, work_dir: Path) -> RpcSession:
-        channel = await self._factory.anew(work_dir, self._loop)
+        channel = await self._factory.anew(work_dir)
         return ChannelRpcSession(channel)
 
 
