@@ -4,6 +4,7 @@ Asynchronous IO
 
 import asyncio, io, os, typing
 from asyncio import AbstractEventLoop, Future
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from typing import BinaryIO
 
@@ -68,22 +69,32 @@ class WriterFileAdapter(MinimalWriter):
 
 
 class ReadFilePump:
-    def __init__(self, fd: int, loop: AbstractEventLoop) -> None:
+    def __init__(
+        self,
+        fd: int,
+        loop: AbstractEventLoop,
+        *,
+        on_eof: Callable[[], None] = lambda: None,
+    ) -> None:
         self._fd = fd
         self._loop = loop
         self.stream = asyncio.StreamReader(loop=loop)
+        self._on_eof = on_eof
 
     def run(self) -> None:
-        while True:
-            try:
-                data = os.read(self._fd, io.DEFAULT_BUFFER_SIZE)
-            except KeyboardInterrupt as ex:
-                nex = IOError('file read interrupted')
-                nex.__cause__ = ex
-                self._loop.call_soon_threadsafe(self.stream.set_exception, nex)
-                return
-            if data:
-                self._loop.call_soon_threadsafe(self.stream.feed_data, data)
-            else:
-                self._loop.call_soon_threadsafe(self.stream.feed_eof)
-                return
+        try:
+            while True:
+                try:
+                    data = os.read(self._fd, io.DEFAULT_BUFFER_SIZE)
+                except KeyboardInterrupt as ex:
+                    nex = IOError('file read interrupted')
+                    nex.__cause__ = ex
+                    self._loop.call_soon_threadsafe(self.stream.set_exception, nex)
+                    return
+                if data:
+                    self._loop.call_soon_threadsafe(self.stream.feed_data, data)
+                else:
+                    self._loop.call_soon_threadsafe(self.stream.feed_eof)
+                    return
+        finally:
+            self._loop.call_soon_threadsafe(self._on_eof)

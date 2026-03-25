@@ -246,6 +246,7 @@ class ChannelRpcSessionFactory(RpcSessionFactory):
 
 class AsyncProgram(typing.Protocol):
     async def amain(self, stdio: DuplexStream, loop: AbstractEventLoop) -> int: ...
+    def on_stdin_eof(self) -> None: ...
 
 
 async def lsp_server_loop(session: LspSession, client: JsonRpcChannel) -> bool:
@@ -272,6 +273,9 @@ class LspProgram:
             return 1
         return 0
 
+    def on_stdin_eof(self) -> None:
+        pass
+
 
 class AsyncMainLoopThread(threading.Thread):
     def __init__(
@@ -293,7 +297,7 @@ class AsyncMainLoopThread(threading.Thread):
 
 def async_stdio_main(aprog: AsyncProgram) -> int:
     loop = asyncio.new_event_loop()
-    stdin_pump = ReadFilePump(sys.stdin.fileno(), loop)
+    stdin_pump = ReadFilePump(sys.stdin.fileno(), loop, on_eof=aprog.on_stdin_eof)
     stdio = DuplexStream(stdin_pump.stream, WriterFileAdapter(sys.stdout.buffer, loop))
     amain_thread = AsyncMainLoopThread(aprog, stdio, loop)
     amain_thread.start()

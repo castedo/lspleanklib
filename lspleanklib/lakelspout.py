@@ -33,6 +33,7 @@ class StdioProgram(LspProgram):
 class WorkProgram(AsyncProgram):
     def __init__(self, lake_cmd: list[str]):
         self.lake_cmd = lake_cmd
+        self._stdin_eof = asyncio.Event()
 
     async def amain(self, stdio: DuplexStream, loop: AbstractEventLoop) -> int:
         sock_path = Path.cwd() / ".lspleank.sock"
@@ -43,12 +44,14 @@ class WorkProgram(AsyncProgram):
             )
             print(errmsg, file=sys.stderr)
             return 1
-        print("Hit CTRL-D (EOF) or CTRL-C to exit ...", flush=True)
+        print("Press CTRL-D (EOF) to stop waiting for new connections ...", flush=True)
         try:
-            socket_server = await asyncio.start_unix_server(self._on_connect, sock_path, backlog=1)
+            socket_server = await asyncio.start_unix_server(
+                self._on_connect, sock_path, backlog=1
+            )
             async with socket_server:
                 print(f"Listening on {sock_path}...", flush=True)
-                await asyncio.sleep(5)
+                await self._stdin_eof.wait()
         except Exception as ex:
             print(ex, file=sys.stderr)
             return 1
@@ -57,8 +60,11 @@ class WorkProgram(AsyncProgram):
                 os.unlink(sock_path)
         return 0
 
-    async def _on_connect(self,
-        reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    def on_stdin_eof(self) -> None:
+        self._stdin_eof.set()
+
+    async def _on_connect(
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
         print("Socket connected")
         aio = DuplexStream(reader, writer)
