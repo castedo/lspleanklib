@@ -23,6 +23,10 @@ from .jsonrpc import (
 )
 from .util import LspObject, awaitable, get_obj, get_uri_path, log
 
+import socket
+
+OS_WITH_UNIX_DOMAIN_SOCKET_SUPPORT = hasattr(socket, 'AF_UNIX')
+
 
 LSP_CLIENT_NAME = "lspleank"
 LSP_SERVER_NAME = "lspleank"
@@ -158,13 +162,18 @@ class RpcSubprocessFactory(RpcDirChannelFactory):
         return await RpcSubprocess.anew(self._lsp_cmd, work_dir, self._loop)
 
 
-def get_socket_path(work_root: Path) -> Path | None:
-    if not hasattr(asyncio, 'open_unix_connection'):
-        return None
+def get_user_socket_path() -> Path:
+    if not OS_WITH_UNIX_DOMAIN_SOCKET_SUPPORT:
+        raise NotImplementedError("This system does not support UNIX sockets")
+    xdg_dir = Path(os.environ.get("XDG_RUNTIME_DIR", "/tmp"))
+    return xdg_dir / "lspleank.sock"
+
+
+def find_socket_path(work_root: Path) -> Path | None:
+    user_sock_path = get_user_socket_path()
     sock_path = work_root / ".lspleank.sock"
     if not sock_path.exists():
-        xdg_dir = Path(os.environ.get("XDG_RUNTIME_DIR", "/tmp"))
-        sock_path = xdg_dir / "lspleank.sock"
+        sock_path = user_sock_path
     return sock_path if sock_path.exists() else None
 
 
@@ -183,7 +192,7 @@ class RpcSocketFactory(RpcDirChannelFactory):
         self._loop = loop
 
     async def anew(self, work_root: Path) -> RpcChannel:
-        sock_path = get_socket_path(work_root)
+        sock_path = find_socket_path(work_root)
         if sock_path is None:
             return await self._default.anew(work_root)
         else:
