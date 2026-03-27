@@ -23,7 +23,7 @@ class NotImplementedClient(RpcInterface):
     async def request(self, mc: MethodCall, fix_id: str | None = None) -> Awaitable[Response]:
         raise NotImplementedError
 
-    def close(self) -> None:
+    async def close(self) -> None:
         pass
 
 async def test_response() -> None:

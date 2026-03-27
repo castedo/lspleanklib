@@ -26,8 +26,8 @@ class LakeClient(RpcInterface):
     def __init__(self, leank_client: RpcInterface):
         self.client = leank_client
 
-    def close(self) -> None:
-        self.client.close()
+    async def close(self) -> None:
+        await self.client.close()
 
     async def notify(self, mc: MethodCall) -> None:
         await self.client.notify(mc)
@@ -44,8 +44,8 @@ class LeankServer(RpcInterface):
     def __init__(self, lake_server: RpcInterface):
         self._lake_server = lake_server
 
-    def close(self) -> None:
-        self._lake_server.close()
+    async def close(self) -> None:
+        await self._lake_server.close()
 
     async def notify(self, mc: MethodCall) -> None:
         await self._lake_server.notify(mc)

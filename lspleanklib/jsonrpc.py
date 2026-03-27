@@ -175,7 +175,7 @@ class IncommingResponses:
 
 
 class JsonRpcMsgConnection(typing.Protocol):
-    def close(self) -> None: ...
+    async def close(self) -> None: ...
     def is_closing(self) -> bool: ...
     async def write(self, msg: JsonRpcMsg) -> None: ...
     async def read(self) -> JsonRpcMsg | None: ...
@@ -185,7 +185,7 @@ class JsonRpcMsgStream(JsonRpcMsgConnection):
     def __init__(self, aio: DuplexStream):
         self._aio = aio
 
-    def close(self) -> None:
+    async def close(self) -> None:
         self._aio.aout.close()
 
     def is_closing(self) -> bool:
@@ -204,7 +204,7 @@ class JsonRpcMsgStream(JsonRpcMsgConnection):
 
 
 class RpcInterface(typing.Protocol):
-    def close(self) -> None: ...
+    async def close(self) -> None: ...
     async def notify(self, mc: MethodCall) -> None: ...
     async def request(
         self, mc: MethodCall, fix_id: str | None = None
@@ -216,9 +216,9 @@ class RemoteRpcProxy(RpcInterface):
         self._conn = conn
         self._expecting: IncommingResponses | None = IncommingResponses(loop)
 
-    def close(self) -> None:
+    async def close(self) -> None:
         log.debug(f"closing {self.__class__.__name__}")
-        self._conn.close()
+        await self._conn.close()
 
     async def notify(self, mc: MethodCall) -> None:
         if self._conn.is_closing():
@@ -266,7 +266,7 @@ class NoClient(RpcInterface):
         warn(f"No client RPC implementation for '{mc.method}' request")
         return future_error(ErrorCodes.MethodNotFound)
 
-    def close(self) -> None:
+    async def close(self) -> None:
         pass
 
 
@@ -310,9 +310,9 @@ class JsonRpcChannel(RpcChannel):
                             coro = await_send_response(self._conn, tbd, msg.id)
                             response_tasks.create_task(coro)
                 finally:
-                    impl.close()
+                    await impl.close()
                     self._proxy.end_of_incomming_responses()
                     log.debug(f"{self.name} pump done reading responses")
         finally:
-            self._conn.close()
             log.debug(f"{self.name} pump closing output stream")
+            await self._conn.close()

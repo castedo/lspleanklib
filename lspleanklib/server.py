@@ -74,7 +74,7 @@ def leank_init_response(init_response: Response) -> Response:
 class LspInitializer(typing.Protocol):
     async def on_initialize(self, init_params: LspObject) -> Response: ...
     async def do_initialized(self) -> RpcInterface | None: ...
-    def close(self) -> None: ...
+    async def close(self) -> None: ...
 
 
 class LspServer(RpcInterface):
@@ -85,10 +85,10 @@ class LspServer(RpcInterface):
     def was_initialized(self) -> bool:
         return self._initialized is not None
 
-    def close(self) -> None:
+    async def close(self) -> None:
         if self._initialized:
-            self._initialized.close()
-        self._initializer.close()
+            await self._initialized.close()
+        await self._initializer.close()
 
     async def request(
         self, mc: MethodCall, fix_id: str | None = None
@@ -263,9 +263,9 @@ class ChannelLspInitializer(LspInitializer):
         else:
             return None
 
-    def close(self) -> None:
+    async def close(self) -> None:
         if self._initializing:
-            self._initializing.close()
+            await self._initializing.close()
 
 
 def channel_lsp_server(

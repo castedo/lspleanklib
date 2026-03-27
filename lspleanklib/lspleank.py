@@ -79,9 +79,9 @@ class SubLeank:
             self._initialized_server.set_result(session_server)
         return self._initialized_server.result()
 
-    def close(self) -> None:
+    async def close(self) -> None:
         if self._future_server.done():
-            self._future_server.result().close()
+            await self._future_server.result().close()
         else:
             warn("LSP session closed before it could start")
             self._future_server.cancel()
@@ -131,9 +131,9 @@ class LeankManager(RpcInterface):
         self._client_capabilities: LspObject = {}
         self._leanks: list[SubLeank] = []
 
-    def close(self) -> None:
+    async def close(self) -> None:
         for leank in self._leanks:
-            leank.close()
+            await leank.close()
 
     async def notify(self, mc: MethodCall) -> None:
         if doc_path := document_method(mc):
@@ -239,9 +239,9 @@ class MultiLeankLspInitializer(LspInitializer):
         else:
             return None
 
-    def close(self) -> None:
+    async def close(self) -> None:
         if self._initializing:
-            self._initializing.close()
+            await self._initializing.close()
 
 
 def multi_leank_lsp_server(

@@ -53,7 +53,7 @@ async def server_session_init(client: RpcInterface, server_cmd: list[str], root:
         aw_resp = await rpc.request(MC('shutdown'))
         assert await aw_resp == Response(None)
         await rpc.notify(MC('exit'))
-        rpc.close()
+        await rpc.close()
 
 
 async def test_sub_lake():
