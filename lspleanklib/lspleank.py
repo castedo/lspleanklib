@@ -289,6 +289,11 @@ class LspLeankProgram(LspProgram):
         return multi_leank_lsp_server(chan_factory, editor, tg)
 
 
+def lspleank_connect_main(start_cmd: Sequence[str]) -> int:
+    cmd_line_args = ['connect', '--', *start_cmd]
+    return async_stdio_main(LspLeankProgram(cmd_line_args))
+
+
 def main(cmd_line_args: list[str] | None = None) -> int:
     logging.basicConfig()
     logging.captureWarnings(True)
