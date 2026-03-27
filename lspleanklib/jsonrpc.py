@@ -5,7 +5,7 @@ JSON-RPC for Language Server Protocol
 from __future__ import annotations
 import asyncio, copy, enum, json, typing
 from asyncio import AbstractEventLoop, Future, TaskGroup
-from collections.abc import AsyncIterator, Awaitable, Mapping, Sequence
+from collections.abc import Awaitable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from typing import Any, TypeAlias
 from warnings import warn
@@ -140,10 +140,6 @@ class JsonRpcMsg:
         return ret
 
 
-async def write_jsonrpc(aout: MinimalWriter, msg: JsonRpcMsg) -> None:
-    await write_message(aout, msg.to_lsp_obj())
-
-
 class IncommingResponses:
     def __init__(self, loop: AbstractEventLoop) -> None:
         self._loop = loop
@@ -178,6 +174,35 @@ class IncommingResponses:
             warn(f"Unexpected response with id: {msg_id}")
 
 
+class JsonRpcMsgConnection(typing.Protocol):
+    def close(self) -> None: ...
+    def is_closing(self) -> bool: ...
+    async def write(self, msg: JsonRpcMsg) -> None: ...
+    async def read(self) -> JsonRpcMsg | None: ...
+
+
+class JsonRpcMsgStream(JsonRpcMsgConnection):
+    def __init__(self, aio: DuplexStream):
+        self._aio = aio
+
+    def close(self) -> None:
+        self._aio.aout.close()
+
+    def is_closing(self) -> bool:
+        return self._aio.aout.is_closing()
+
+    async def write(self, msg: JsonRpcMsg) -> None:
+        await write_message(self._aio.aout, msg.to_lsp_obj())
+
+    async def read(self) -> JsonRpcMsg | None:
+        while (msg := await read_message(self._aio.ain)) is not None:
+            try:
+                return JsonRpcMsg.from_jsonrpc(msg)
+            except ValueError as ex:
+                log.exception(ex)
+        return None
+
+
 class RpcInterface(typing.Protocol):
     def close(self) -> None: ...
     async def notify(self, mc: MethodCall) -> None: ...
@@ -187,28 +212,28 @@ class RpcInterface(typing.Protocol):
 
 
 class RemoteRpcProxy(RpcInterface):
-    def __init__(self, aout: MinimalWriter, loop: AbstractEventLoop):
-        self._aout = aout
+    def __init__(self, conn: JsonRpcMsgConnection, loop: AbstractEventLoop):
+        self._conn = conn
         self._expecting: IncommingResponses | None = IncommingResponses(loop)
 
     def close(self) -> None:
         log.debug(f"closing {self.__class__.__name__}")
-        self._aout.close()
+        self._conn.close()
 
     async def notify(self, mc: MethodCall) -> None:
-        if self._aout.is_closing():
+        if self._conn.is_closing():
             log.info(f"notification '{mc.method}' on closed or closing RPC connection")
             return
-        await write_jsonrpc(self._aout, JsonRpcMsg(mc))
+        await self._conn.write(JsonRpcMsg(mc))
 
     async def request(
         self, mc: MethodCall, fix_id: str | None = None
     ) -> Awaitable[Response]:
-        if self._expecting is None or self._aout.is_closing():
+        if self._expecting is None or self._conn.is_closing():
             warn('request called on closed or closing RPC connection')
             return future_error(ErrorCodes.InternalError)
         (msg_id, expect) = self._expecting.prepare(fix_id)
-        await write_jsonrpc(self._aout, JsonRpcMsg(mc, msg_id))
+        await self._conn.write(JsonRpcMsg(mc, msg_id))
         return expect
 
     def got_response(self, response: Response, msg_id: int | str | None) -> None:
@@ -246,20 +271,20 @@ class NoClient(RpcInterface):
 
 
 async def await_send_response(
-    aout: MinimalWriter, tbd: Awaitable[Response], msg_id: int | str | None
+    conn: JsonRpcMsgConnection, tbd: Awaitable[Response], msg_id: int | str | None
 ) -> None:
     try:
         response = await tbd
-        await write_jsonrpc(aout, JsonRpcMsg(response, msg_id))
+        await conn.write(JsonRpcMsg(response, msg_id))
     except (asyncio.CancelledError, ValueError) as ex:
         # writing to closed aout stream raises ValueError
         log.exception(ex)
 
 
 class JsonRpcChannel(RpcChannel):
-    def __init__(self, aio: DuplexStream, loop: AbstractEventLoop, name: str):
-        self._aio = aio
-        self._proxy = RemoteRpcProxy(aio.aout, loop)
+    def __init__(self, conn: JsonRpcMsgConnection, loop: AbstractEventLoop, name: str):
+        self._conn = conn
+        self._proxy = RemoteRpcProxy(conn, loop)
         self.name = name
 
     @property
@@ -274,7 +299,7 @@ class JsonRpcChannel(RpcChannel):
         try:
             async with TaskGroup() as response_tasks:
                 try:
-                    async for msg in self._stream_jsonrpc():
+                    while (msg := await self._conn.read()) is not None:
                         if isinstance(msg.payload, Response):
                             self._proxy.got_response(msg.payload, msg.id)
                         elif msg.id is None:
@@ -282,19 +307,12 @@ class JsonRpcChannel(RpcChannel):
                         else:
                             fix_id = msg.id if isinstance(msg.id, str) else None
                             tbd = await impl.request(msg.payload, fix_id)
-                            coro = await_send_response(self._aio.aout, tbd, msg.id)
+                            coro = await_send_response(self._conn, tbd, msg.id)
                             response_tasks.create_task(coro)
                 finally:
                     impl.close()
                     self._proxy.end_of_incomming_responses()
                     log.debug(f"{self.name} pump done reading responses")
         finally:
-            self._aio.aout.close()
+            self._conn.close()
             log.debug(f"{self.name} pump closing output stream")
-
-    async def _stream_jsonrpc(self) -> AsyncIterator[JsonRpcMsg]:
-        while (msg := await read_message(self._aio.ain)) is not None:
-            try:
-                yield JsonRpcMsg.from_jsonrpc(msg)
-            except ValueError as ex:
-                log.exception(ex)

@@ -5,6 +5,7 @@ from pathlib import Path
 
 from lspleanklib.jsonrpc import (
     JsonRpcChannel,
+    JsonRpcMsgStream,
     MethodCall as MC,
     Response,
     RpcInterface,
@@ -32,7 +33,7 @@ from util import ok_server_loop
 async def server_session(editor_impl: RpcInterface, server_cmd: list[str]):
     loop = asyncio.get_running_loop()
     async with aio_xpipe() as (outer, inner):
-        outer_chan = JsonRpcChannel(outer, loop, 'outer')
+        outer_chan = JsonRpcChannel(JsonRpcMsgStream(outer), loop, 'outer')
         client_pump_task = asyncio.create_task(outer_chan.pump(editor_impl))
         server_task = asyncio.create_task(ok_server_loop(inner, server_cmd))
         yield outer_chan.proxy

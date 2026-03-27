@@ -15,6 +15,7 @@ from .cli import version
 from .jsonrpc import (
     ErrorCodes,
     JsonRpcChannel,
+    JsonRpcMsgStream,
     MethodCall,
     Response,
     RpcChannel,
@@ -129,7 +130,7 @@ class RpcSubprocess(RpcChannel):
         assert proc.stdin and proc.stdout
         self._proc = proc
         aio = DuplexStream(proc.stdout, proc.stdin)
-        self._sub_con = JsonRpcChannel(aio, loop, 'subproc')
+        self._sub_con = JsonRpcChannel(JsonRpcMsgStream(aio), loop, 'subproc')
 
     @property
     def proxy(self) -> RpcInterface:
@@ -183,7 +184,7 @@ async def create_rpc_socket_channel(
     assert loop == asyncio.get_running_loop()
     (reader, writer) = await asyncio.open_unix_connection(sock_path)
     aio = DuplexStream(reader, writer)
-    return JsonRpcChannel(aio, loop, 'socket')
+    return JsonRpcChannel(JsonRpcMsgStream(aio), loop, 'socket')
 
 
 class RpcSocketFactory(RpcDirChannelFactory):
@@ -284,7 +285,7 @@ class LspProgram(AsyncProgram):
 
     async def amain(self, stdio: DuplexStream, loop: AbstractEventLoop) -> int:
         try:
-            client_chan = JsonRpcChannel(stdio, loop, 'stdio')
+            client_chan = JsonRpcChannel(JsonRpcMsgStream(stdio), loop, 'stdio')
             async with TaskGroup() as tg:
                 server = await self.start_server(client_chan.proxy, tg)
                 tg.create_task(client_chan.pump(server))

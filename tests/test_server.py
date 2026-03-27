@@ -13,10 +13,10 @@ from lspleanklib.aio import (
 from lspleanklib.jsonrpc import (
     JsonRpcChannel,
     JsonRpcMsg,
+    JsonRpcMsgStream,
     LspObject,
     MethodCall,
     read_message,
-    write_jsonrpc,
     write_message,
 )
 
@@ -33,10 +33,10 @@ INIT_BYTES = (TEST_CASES / "vim9-lsp-init.txt").read_bytes()
 
 
 async def write_notify(aout, method, params) -> None:
-    await write_jsonrpc(aout, JsonRpcMsg(MethodCall(method, params)))
+    await write_message(aout, JsonRpcMsg(MethodCall(method, params)).to_lsp_obj())
 
 async def write_request(aout, method, params, id) -> None:
-    await write_jsonrpc(aout, JsonRpcMsg(MethodCall(method, params), id))
+    await write_message(aout, JsonRpcMsg(MethodCall(method, params), id).to_lsp_obj())
 
 async def readexactly(f: BinaryIO, n: int) -> bytes:
     loop = asyncio.get_running_loop()
@@ -56,8 +56,8 @@ async def a_pipe():
 
 async def msg_loop(super_io: DuplexStream, sub_io: DuplexStream) -> None:
     loop = asyncio.get_running_loop()
-    super_con = JsonRpcChannel(super_io, loop, 'super')
-    sub_con = JsonRpcChannel(sub_io, loop, 'sub')
+    super_con = JsonRpcChannel(JsonRpcMsgStream(super_io), loop, 'super')
+    sub_con = JsonRpcChannel(JsonRpcMsgStream(sub_io), loop, 'sub')
     async with asyncio.TaskGroup() as tg:
         tg.create_task(sub_con.pump(super_con.proxy))
         tg.create_task(super_con.pump(sub_con.proxy))
