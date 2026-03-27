@@ -3,7 +3,7 @@ JSON-RPC for Language Server Protocol
 """
 
 from __future__ import annotations
-import asyncio, enum, json, typing
+import asyncio, copy, enum, json, typing
 from asyncio import AbstractEventLoop, Future, TaskGroup
 from collections.abc import AsyncIterator, Awaitable, Mapping, Sequence
 from dataclasses import asdict, dataclass
@@ -64,7 +64,10 @@ class MethodCall:
     params: MsgParams | None = None
 
     def to_lsp_obj(self) -> LspObject:
-        return asdict(self)
+        lobj: dict[str, LspAny] = {'method': self.method}
+        if self.params is not None:
+            lobj['params'] = copy.deepcopy(self.params)
+        return lobj
 
 
 @dataclass

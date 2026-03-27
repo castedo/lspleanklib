@@ -33,7 +33,7 @@ async def test_response() -> None:
             tg.create_task(con.pump(NotImplementedClient()))
             tbd = await con.proxy.request(MethodCall("do/thing", None), None)
             msg = await read_message(remote.ain)
-            assert msg == {"jsonrpc":"2.0", "id": 1, "method": "do/thing", "params": None}
+            assert msg == {"jsonrpc":"2.0", "id": 1, "method": "do/thing"}
             await write_message(remote.aout, {"jsonrpc":"2.0", "id": 1, "result": "nothing"})
             assert await tbd == Response("nothing")
             remote.aout.close()
@@ -47,7 +47,7 @@ async def test_response_cancelled() -> None:
             tg.create_task(con.pump(NotImplementedClient()))
             tbd = await con.proxy.request(MethodCall("do/thing", None), None)
             msg = await read_message(remote.ain)
-            assert msg == {"jsonrpc":"2.0", "id": 1, "method": "do/thing", "params": None}
+            assert msg == {"jsonrpc":"2.0", "id": 1, "method": "do/thing"}
             remote.aout.close()
             cancelled = None
             try:
