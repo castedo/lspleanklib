@@ -176,14 +176,16 @@ class IncommingResponses:
 
 class JsonRpcMsgConnection(typing.Protocol):
     async def close(self) -> None: ...
-    def is_closing(self) -> bool: ...
     async def write(self, msg: JsonRpcMsg) -> None: ...
     async def read(self) -> JsonRpcMsg | None: ...
+    @property
+    def name(self) -> str: ...
 
 
 class JsonRpcMsgStream(JsonRpcMsgConnection):
-    def __init__(self, aio: DuplexStream):
+    def __init__(self, aio: DuplexStream, name: str):
         self._aio = aio
+        self._name = name
 
     async def close(self) -> None:
         self._aio.aout.close()
@@ -201,6 +203,10 @@ class JsonRpcMsgStream(JsonRpcMsgConnection):
             except ValueError as ex:
                 log.exception(ex)
         return None
+
+    @property
+    def name(self) -> str:
+        return self._name
 
 
 class RpcInterface(typing.Protocol):
@@ -221,20 +227,30 @@ class RemoteRpcProxy(RpcInterface):
         await self._conn.close()
 
     async def notify(self, mc: MethodCall) -> None:
-        if self._conn.is_closing():
-            log.info(f"notification '{mc.method}' on closed or closing RPC connection")
-            return
-        await self._conn.write(JsonRpcMsg(mc))
+        msg = JsonRpcMsg(mc)
+        try:
+            await self._conn.write(msg)
+        except RuntimeError:
+            self._log_exception(mc)
 
     async def request(
         self, mc: MethodCall, fix_id: str | None = None
     ) -> Awaitable[Response]:
-        if self._expecting is None or self._conn.is_closing():
+        if self._expecting is None:
             warn('request called on closed or closing RPC connection')
             return future_error(ErrorCodes.InternalError)
         (msg_id, expect) = self._expecting.prepare(fix_id)
-        await self._conn.write(JsonRpcMsg(mc, msg_id))
+        try:
+            await self._conn.write(JsonRpcMsg(mc, msg_id))
+        except RuntimeError:
+            error_response = Response.from_error_code(ErrorCodes.InternalError)
+            self._expecting.got_response(error_response, msg_id)
+            self._log_exception(mc)
         return expect
+
+    def _log_exception(self, mc: MethodCall) -> None:
+        errmsg = "Failed '{}' call on RPC connection '{}'"
+        log.exception(errmsg.format(mc.method, self._conn.name))
 
     def got_response(self, response: Response, msg_id: int | str | None) -> None:
         if self._expecting is None:
@@ -282,10 +298,9 @@ async def await_send_response(
 
 
 class JsonRpcChannel(RpcChannel):
-    def __init__(self, conn: JsonRpcMsgConnection, loop: AbstractEventLoop, name: str):
+    def __init__(self, conn: JsonRpcMsgConnection, loop: AbstractEventLoop):
         self._conn = conn
         self._proxy = RemoteRpcProxy(conn, loop)
-        self.name = name
 
     @property
     def proxy(self) -> RpcInterface:
@@ -312,7 +327,7 @@ class JsonRpcChannel(RpcChannel):
                 finally:
                     await impl.close()
                     self._proxy.end_of_incomming_responses()
-                    log.debug(f"{self.name} pump done reading responses")
+                    log.debug(f"{self._conn.name} pump done reading responses")
         finally:
-            log.debug(f"{self.name} pump closing output stream")
+            log.debug(f"{self._conn.name} pump closing connection")
             await self._conn.close()

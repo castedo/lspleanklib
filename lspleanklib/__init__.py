@@ -1,5 +1,12 @@
 from .aio import DuplexStream
-from .jsonrpc import RpcChannel, JsonRpcChannel
+from .jsonrpc import (
+    JsonRpcChannel,
+    JsonRpcMsg,
+    JsonRpcMsgConnection,
+    JsonRpcMsgStream,
+    MethodCall,
+    RpcChannel,
+)
 from .lake import LeankLakeFactory
 from .lspleank import lspleank_connect_main
 from .server import (
@@ -12,7 +19,11 @@ from .server import (
 __all__ = (
     'DuplexStream',
     'JsonRpcChannel',
+    'JsonRpcMsg',
+    'JsonRpcMsgConnection',
+    'JsonRpcMsgStream',
     'LeankLakeFactory',
+    'MethodCall',
     'RpcChannel',
     'RpcDirChannelFactory',
     'RpcSubprocessFactory',

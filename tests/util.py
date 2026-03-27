@@ -87,7 +87,7 @@ async def ok_server_loop(stdio: DuplexStream, cmd_line) -> bool:
     loop = asyncio.get_running_loop()
     lake_factory = RpcSubprocessFactory(cmd_line, loop)
     leank_factory = LeankLakeFactory(lake_factory)
-    client_chan = JsonRpcChannel(JsonRpcMsgStream(stdio), loop, 'stdio')
+    client_chan = JsonRpcChannel(JsonRpcMsgStream(stdio, 'stdio'), loop)
     async with asyncio.TaskGroup() as tg:
         server = multi_leank_lsp_server(leank_factory, client_chan.proxy, tg)
         tg.create_task(client_chan.pump(server))

@@ -52,7 +52,7 @@ class LeankLakeConnection:
         self._connected = True
         print(f"Editor connected to {self._sock_path}")
         aio = DuplexStream(reader, writer)
-        sock_chan = JsonRpcChannel(JsonRpcMsgStream(aio), self._loop, 'socket')
+        sock_chan = JsonRpcChannel(JsonRpcMsgStream(aio, 'socket'), self._loop)
         self._tg.create_task(self._async_on_connect(sock_chan))
 
     async def _async_on_connect(self, sock_chan: RpcChannel) -> None:
