@@ -267,7 +267,7 @@ class RpcChannel(typing.Protocol):
     @property
     def proxy(self) -> RpcInterface: ...
 
-    async def pump(self, impl: RpcInterface) -> None: ...
+    async def pump(self, impl: RpcInterface | None = None) -> None: ...
 
 
 class NoClient(RpcInterface):
@@ -304,11 +304,12 @@ class RpcMsgChannel(RpcChannel):
     def proxy(self) -> RpcInterface:
         return self._proxy
 
-    async def pump(self, impl: RpcInterface) -> None:
+    async def pump(self, impl: RpcInterface | None = None) -> None:
         """Listen for JSONRPC message on connection input until stream EOF.
 
         impl: implements the methods for RPC calls received on stream input
         """
+        impl = impl or NoClient()
         try:
             async with TaskGroup() as response_tasks:
                 try:

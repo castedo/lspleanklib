@@ -73,8 +73,9 @@ class LeankLakeChannel(RpcChannel):
     def proxy(self) -> RpcInterface:
         return self._leank_server
 
-    async def pump(self, leank_client: RpcInterface) -> None:
-        await self._lake_channel.pump(LakeClient(leank_client))
+    async def pump(self, leank_client: RpcInterface | None = None) -> None:
+        impl = None if leank_client is None else LakeClient(leank_client)
+        await self._lake_channel.pump(impl)
 
 
 class LeankLakeFactory(RpcDirChannelFactory):

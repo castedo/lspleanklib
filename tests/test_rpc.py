@@ -7,7 +7,6 @@ from lspleanklib.jsonrpc import (
     RpcMsgChannel,
     JsonRpcMsgStream,
     MethodCall,
-    NoClient,
     Response,
     RpcInterface,
     read_message,
@@ -66,7 +65,7 @@ async def test_simple_serve() -> None:
         async with aio_xpipe() as (local, remote):
             async with asyncio.TaskGroup() as tg:
                 con = RpcMsgChannel(JsonRpcMsgStream(local, 'local'), loop)
-                tg.create_task(con.pump(NoClient()))
+                tg.create_task(con.pump())
                 await write_message(remote.aout, {"jsonrpc":"2.0", "id": 1, "method": "nothing"})
                 msg = await read_message(remote.ain)
                 assert msg == {"jsonrpc":"2.0", "id": 1,

@@ -136,7 +136,7 @@ class RpcSubprocess(RpcChannel):
     def proxy(self) -> RpcInterface:
         return self._sub_con.proxy
 
-    async def pump(self, parent: RpcInterface) -> None:
+    async def pump(self, parent: RpcInterface | None = None) -> None:
         log.debug(f"Subprocess {self._proc.pid} for {self._work_dir}")
         await self._sub_con.pump(parent)
         await self._proc.communicate()
