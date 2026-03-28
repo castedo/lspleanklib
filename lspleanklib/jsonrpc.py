@@ -178,14 +178,11 @@ class RpcMsgConnection(typing.Protocol):
     async def close_and_wait(self) -> None: ...
     async def write(self, msg: JsonRpcMsg) -> None: ...
     async def read(self) -> JsonRpcMsg | None: ...
-    @property
-    def name(self) -> str: ...
 
 
 class JsonRpcMsgStream(RpcMsgConnection):
-    def __init__(self, aio: DuplexStream, name: str):
+    def __init__(self, aio: DuplexStream):
         self._aio = aio
-        self._name = name
 
     async def close_and_wait(self) -> None:
         self._aio.aout.close()
@@ -202,10 +199,6 @@ class JsonRpcMsgStream(RpcMsgConnection):
                 log.exception(ex)
         return None
 
-    @property
-    def name(self) -> str:
-        return self._name
-
 
 class RpcInterface(typing.Protocol):
     async def close_and_wait(self) -> None: ...
@@ -216,7 +209,7 @@ class RpcInterface(typing.Protocol):
 
 
 class RemoteRpcProxy(RpcInterface):
-    def __init__(self, conn: RpcMsgConnection, loop: AbstractEventLoop):
+    def __init__(self, conn: RpcMsgConnection, *, loop: AbstractEventLoop):
         self._conn = conn
         self._expecting: IncommingResponses | None = IncommingResponses(loop)
 
@@ -229,7 +222,7 @@ class RemoteRpcProxy(RpcInterface):
         try:
             await self._conn.write(msg)
         except RuntimeError:
-            self._log_exception(mc)
+            log.exception(f"Write failed for RPC call '{mc.method}'")
 
     async def request(
         self, mc: MethodCall, fix_id: str | None = None
@@ -243,12 +236,8 @@ class RemoteRpcProxy(RpcInterface):
         except RuntimeError:
             error_response = Response.from_error_code(ErrorCodes.InternalError)
             self._expecting.got_response(error_response, msg_id)
-            self._log_exception(mc)
+            log.exception(f"Write failed for RPC call '{mc.method}'")
         return expect
-
-    def _log_exception(self, mc: MethodCall) -> None:
-        errmsg = "Failed '{}' call on RPC connection '{}'"
-        log.exception(errmsg.format(mc.method, self._conn.name))
 
     def got_response(self, response: Response, msg_id: int | str | None) -> None:
         if self._expecting is None:
@@ -296,9 +285,10 @@ async def await_send_response(
 
 
 class RpcMsgChannel(RpcChannel):
-    def __init__(self, conn: RpcMsgConnection, loop: AbstractEventLoop):
+    def __init__(self, conn: RpcMsgConnection, *, name: str, loop: AbstractEventLoop):
         self._conn = conn
-        self._proxy = RemoteRpcProxy(conn, loop)
+        self._proxy = RemoteRpcProxy(conn, loop=loop)
+        self.name = name
 
     @property
     def proxy(self) -> RpcInterface:
@@ -326,7 +316,14 @@ class RpcMsgChannel(RpcChannel):
                 finally:
                     await impl.close_and_wait()
                     self._proxy.end_of_incomming_responses()
-                    log.debug(f"{self._conn.name} pump done reading responses")
+                    log.debug(f"{self.name} pump done reading responses")
         finally:
-            log.debug(f"{self._conn.name} pump closing connection")
+            log.debug(f"{self.name} pump closing connection")
             await self._conn.close_and_wait()
+
+
+def json_rpc_channel(
+    ain: MinimalReader, aout: MinimalWriter, *, name: str, loop: AbstractEventLoop
+) -> RpcMsgChannel:
+    stream = JsonRpcMsgStream(DuplexStream(ain, aout))
+    return RpcMsgChannel(stream, name=name, loop=loop)

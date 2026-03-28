@@ -18,7 +18,7 @@ async def asyncio_pipe_stream_reader(pipe: BinaryIO, loop) -> MinimalReader:
     return ret
 
 async def pump_pipe_stream_reader(pipe: BinaryIO, loop) -> MinimalReader:
-    pump = ReadFilePump(pipe.fileno(), loop)
+    pump = ReadFilePump(pipe.fileno(), loop=loop)
     pool = ThreadPoolExecutor(1, thread_name_prefix="blocking_read")
     loop.run_in_executor(pool, pump.run)
     return pump.stream
@@ -41,8 +41,8 @@ async def aio_xpipe():
     ):
         outer_reader = await pipe_stream_reader(o_r, loop)
         inner_reader = await pipe_stream_reader(i_r, loop)
-        outer = DuplexStream(outer_reader, WriterFileAdapter(o_w, loop))
-        inner = DuplexStream(inner_reader, WriterFileAdapter(i_w, loop))
+        outer = DuplexStream(outer_reader, WriterFileAdapter(o_w, loop=loop))
+        inner = DuplexStream(inner_reader, WriterFileAdapter(i_w, loop=loop))
         yield outer, inner
 
 @contextlib.asynccontextmanager
@@ -85,9 +85,9 @@ class MockEditor(RpcInterface):
 
 async def ok_server_loop(stdio: DuplexStream, cmd_line) -> bool:
     loop = asyncio.get_running_loop()
-    lake_factory = RpcSubprocessFactory(cmd_line, loop)
+    lake_factory = RpcSubprocessFactory(cmd_line, loop=loop)
     leank_factory = LeankLakeFactory(lake_factory)
-    client_chan = RpcMsgChannel(JsonRpcMsgStream(stdio, 'stdio'), loop)
+    client_chan = RpcMsgChannel(JsonRpcMsgStream(stdio), name='stdio', loop=loop)
     async with asyncio.TaskGroup() as tg:
         server = multi_leank_lsp_server(leank_factory, client_chan.proxy, tg)
         tg.create_task(client_chan.pump(server))

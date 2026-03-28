@@ -21,6 +21,7 @@ from .jsonrpc import (
     RpcChannel,
     RpcInterface,
     future_error,
+    json_rpc_channel,
 )
 from .util import LspObject, awaitable, get_obj, get_uri_path, log
 
@@ -124,13 +125,13 @@ class LspServer(RpcInterface):
 
 class RpcSubprocess(RpcChannel):
     def __init__(
-        self, proc: subprocess.Process, work_dir: Path, loop: AbstractEventLoop
+        self, proc: subprocess.Process, work_dir: Path, *, loop: AbstractEventLoop
     ):
         self._work_dir = work_dir
         assert proc.stdin and proc.stdout
         self._proc = proc
         aio = DuplexStream(proc.stdout, proc.stdin)
-        self._sub_con = RpcMsgChannel(JsonRpcMsgStream(aio, 'subproc'), loop)
+        self._sub_con = RpcMsgChannel(JsonRpcMsgStream(aio), name='subproc', loop=loop)
 
     @property
     def proxy(self) -> RpcInterface:
@@ -146,21 +147,21 @@ class RpcSubprocess(RpcChannel):
 
     @staticmethod
     async def anew(
-        cmd: Sequence[str], work_dir: Path, loop: AbstractEventLoop
+        cmd: Sequence[str], work_dir: Path, *, loop: AbstractEventLoop
     ) -> RpcSubprocess:
         proc = await asyncio.create_subprocess_exec(
             *cmd, cwd=work_dir, stdin=subprocess.PIPE, stdout=subprocess.PIPE
         )
-        return RpcSubprocess(proc, work_dir, loop)
+        return RpcSubprocess(proc, work_dir, loop=loop)
 
 
 class RpcSubprocessFactory(RpcDirChannelFactory):
-    def __init__(self, lsp_cmd: list[str], loop: AbstractEventLoop):
+    def __init__(self, lsp_cmd: list[str], *, loop: AbstractEventLoop):
         self._lsp_cmd = lsp_cmd
         self._loop = loop
 
     async def anew(self, work_dir: Path) -> RpcChannel:
-        return await RpcSubprocess.anew(self._lsp_cmd, work_dir, self._loop)
+        return await RpcSubprocess.anew(self._lsp_cmd, work_dir, loop=self._loop)
 
 
 def get_user_socket_path() -> Path:
@@ -178,32 +179,27 @@ def find_socket_path(work_root: Path) -> Path | None:
     return sock_path if sock_path.exists() else None
 
 
-async def create_rpc_socket_channel(
-    sock_path: Path, loop: AbstractEventLoop
-) -> RpcChannel:
-    assert loop == asyncio.get_running_loop()
+async def create_rpc_socket_channel(sock_path: Path) -> RpcChannel:
+    loop = asyncio.get_running_loop()
     (reader, writer) = await asyncio.open_unix_connection(sock_path)
-    aio = DuplexStream(reader, writer)
-    return RpcMsgChannel(JsonRpcMsgStream(aio, 'socket'), loop)
+    return json_rpc_channel(reader, writer, name='socket', loop=loop)
 
 
 class RpcSocketFactory(RpcDirChannelFactory):
-    def __init__(self, default: RpcDirChannelFactory, loop: AbstractEventLoop):
+    def __init__(self, default: RpcDirChannelFactory):
         self._default = default
-        self._loop = loop
 
     async def anew(self, work_root: Path) -> RpcChannel:
         sock_path = find_socket_path(work_root)
         if sock_path is None:
             return await self._default.anew(work_root)
         else:
-            return await create_rpc_socket_channel(sock_path, self._loop)
+            return await create_rpc_socket_channel(sock_path)
 
 
 class RpcStartSocketFactory(RpcDirChannelFactory):
-    def __init__(self, start_cmd: Sequence[str], loop: AbstractEventLoop):
+    def __init__(self, start_cmd: Sequence[str]):
         self._start_cmd = list(start_cmd)
-        self._loop = loop
 
     async def anew(self, work_root: Path) -> RpcChannel:
         # ignoring work_root because user socket handles any work root
@@ -226,7 +222,7 @@ class RpcStartSocketFactory(RpcDirChannelFactory):
             if not sock_path.exists():
                 err = "Failed to find {} after start command {}"
                 raise RuntimeError(err.format(sock_path, self._start_cmd))
-        return await create_rpc_socket_channel(sock_path, self._loop)
+        return await create_rpc_socket_channel(sock_path)
 
 
 class ChannelLspInitializer(LspInitializer):
@@ -275,7 +271,7 @@ def channel_lsp_server(
 
 
 class AsyncProgram(typing.Protocol):
-    async def amain(self, stdio: DuplexStream, loop: AbstractEventLoop) -> int: ...
+    async def amain(self, stdio: DuplexStream, *, loop: AbstractEventLoop) -> int: ...
     def on_stdin_eof(self) -> None: ...
 
 
@@ -283,12 +279,12 @@ class LspProgram(AsyncProgram):
     @abc.abstractmethod
     async def start_server(self, client: RpcInterface, tg: TaskGroup) -> LspServer: ...
 
-    async def amain(self, stdio: DuplexStream, loop: AbstractEventLoop) -> int:
+    async def amain(self, stdio: DuplexStream, *, loop: AbstractEventLoop) -> int:
         try:
-            client_chan = RpcMsgChannel(JsonRpcMsgStream(stdio, 'stdio'), loop)
+            stdio_chan = RpcMsgChannel(JsonRpcMsgStream(stdio), name='stdio', loop=loop)
             async with TaskGroup() as tg:
-                server = await self.start_server(client_chan.proxy, tg)
-                tg.create_task(client_chan.pump(server))
+                server = await self.start_server(stdio_chan.proxy, tg)
+                tg.create_task(stdio_chan.pump(server))
             ok = server.was_initialized()
         except Exception as ex:
             log.exception(ex)
@@ -304,7 +300,7 @@ class LspProgram(AsyncProgram):
 
 class AsyncMainLoopThread(threading.Thread):
     def __init__(
-        self, aprog: AsyncProgram, stdio: DuplexStream, loop: AbstractEventLoop
+        self, aprog: AsyncProgram, stdio: DuplexStream, *, loop: AbstractEventLoop
     ):
         super().__init__(name=self.__class__.__name__)
         self._aprog = aprog
@@ -314,7 +310,7 @@ class AsyncMainLoopThread(threading.Thread):
 
     def run(self) -> None:
         asyncio.set_event_loop(self._loop)
-        coro = self._aprog.amain(self._stdio, self._loop)
+        coro = self._aprog.amain(self._stdio, loop=self._loop)
         self.retcode = self._loop.run_until_complete(coro)
         if not self._stdio.ain.at_eof():
             os.kill(os.getpid(), signal.SIGINT)
@@ -322,9 +318,10 @@ class AsyncMainLoopThread(threading.Thread):
 
 def async_stdio_main(aprog: AsyncProgram) -> int:
     loop = asyncio.new_event_loop()
-    stdin_pump = ReadFilePump(sys.stdin.fileno(), loop, on_eof=aprog.on_stdin_eof)
-    stdio = DuplexStream(stdin_pump.stream, WriterFileAdapter(sys.stdout.buffer, loop))
-    amain_thread = AsyncMainLoopThread(aprog, stdio, loop)
+    stdin_pump = ReadFilePump(sys.stdin.fileno(), loop=loop, on_eof=aprog.on_stdin_eof)
+    writer = WriterFileAdapter(sys.stdout.buffer, loop=loop)
+    stdio = DuplexStream(stdin_pump.stream, writer)
+    amain_thread = AsyncMainLoopThread(aprog, stdio, loop=loop)
     amain_thread.start()
     stdin_pump.run()
     try:

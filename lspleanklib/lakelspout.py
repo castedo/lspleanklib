@@ -28,7 +28,7 @@ class StdioProgram(LspProgram):
 
     async def start_server(self, client: RpcInterface, tg: TaskGroup) -> LspServer:
         loop = asyncio.get_running_loop()
-        lake_factory = RpcSubprocessFactory(self._lake_cmd, loop)
+        lake_factory = RpcSubprocessFactory(self._lake_cmd, loop=loop)
         leank_factory = LeankLakeFactory(lake_factory)
         return channel_lsp_server(leank_factory, client, tg)
 
@@ -52,7 +52,7 @@ class LeankLakeConnection:
         self._connected = True
         print(f"Editor connected to {self._sock_path}")
         aio = DuplexStream(reader, writer)
-        sock_chan = RpcMsgChannel(JsonRpcMsgStream(aio, 'socket'), self._loop)
+        sock_chan = RpcMsgChannel(JsonRpcMsgStream(aio), name='socket', loop=self._loop)
         self._tg.create_task(self._async_on_connect(sock_chan))
 
     async def _async_on_connect(self, sock_chan: RpcChannel) -> None:
@@ -72,7 +72,7 @@ class WorkProgram(AsyncProgram):
         self._lake_cmd = lake_cmd
         self._stdin_eof = asyncio.Event()
 
-    async def amain(self, stdio: DuplexStream, loop: AbstractEventLoop) -> int:
+    async def amain(self, stdio: DuplexStream, *, loop: AbstractEventLoop) -> int:
         sock_path = Path.cwd() / ".lspleank.sock"
         if sock_path.exists():
             errmsg = (
@@ -84,7 +84,7 @@ class WorkProgram(AsyncProgram):
         print("Press CTRL-D (EOF) to stop waiting for new connections ...", flush=True)
         try:
             async with asyncio.TaskGroup() as tg:
-                lake_factory = RpcSubprocessFactory(self._lake_cmd, loop)
+                lake_factory = RpcSubprocessFactory(self._lake_cmd, loop=loop)
                 leank_factory = LeankLakeFactory(lake_factory)
                 session = LeankLakeConnection(leank_factory, tg, sock_path)
                 socket_server = await asyncio.start_unix_server(

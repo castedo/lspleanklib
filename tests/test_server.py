@@ -50,14 +50,14 @@ async def a_pipe():
     with os.fdopen(w, 'wb') as fw:
         with os.fdopen(r, 'rb') as fr:
             reader = await pipe_stream_reader(fr, loop)
-            writer = WriterFileAdapter(fw, loop)
+            writer = WriterFileAdapter(fw, loop=loop)
             yield DuplexStream(reader, writer)
 
 
 async def msg_loop(super_io: DuplexStream, sub_io: DuplexStream) -> None:
     loop = asyncio.get_running_loop()
-    super_con = RpcMsgChannel(JsonRpcMsgStream(super_io, 'super'), loop)
-    sub_con = RpcMsgChannel(JsonRpcMsgStream(sub_io, 'sub'), loop)
+    super_con = RpcMsgChannel(JsonRpcMsgStream(super_io), name='super', loop=loop)
+    sub_con = RpcMsgChannel(JsonRpcMsgStream(sub_io), name='sub', loop=loop)
     async with asyncio.TaskGroup() as tg:
         tg.create_task(sub_con.pump(super_con.proxy))
         tg.create_task(super_con.pump(sub_con.proxy))

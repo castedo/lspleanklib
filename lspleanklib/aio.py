@@ -31,7 +31,7 @@ class DuplexStream:
 
 
 class WriterFileAdapter(MinimalWriter):
-    def __init__(self, fout: BinaryIO, loop: AbstractEventLoop):
+    def __init__(self, fout: BinaryIO, *, loop: AbstractEventLoop):
         self._fout = fout
         self._loop = loop
         self._pool = ThreadPoolExecutor(1, thread_name_prefix="blocking_write")
@@ -72,8 +72,8 @@ class ReadFilePump:
     def __init__(
         self,
         fd: int,
-        loop: AbstractEventLoop,
         *,
+        loop: AbstractEventLoop,
         on_eof: Callable[[], None] = lambda: None,
     ) -> None:
         self._fd = fd
