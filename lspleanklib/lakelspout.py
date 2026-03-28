@@ -9,7 +9,7 @@ from pathlib import Path
 
 from .aio import DuplexStream
 from .cli import split_cmd_line, version
-from .jsonrpc import JsonRpcChannel, JsonRpcMsgStream, RpcChannel, RpcInterface
+from .jsonrpc import RpcMsgChannel, JsonRpcMsgStream, RpcChannel, RpcInterface
 from .lake import LeankLakeFactory
 from .server import (
     AsyncProgram,
@@ -52,7 +52,7 @@ class LeankLakeConnection:
         self._connected = True
         print(f"Editor connected to {self._sock_path}")
         aio = DuplexStream(reader, writer)
-        sock_chan = JsonRpcChannel(JsonRpcMsgStream(aio, 'socket'), self._loop)
+        sock_chan = RpcMsgChannel(JsonRpcMsgStream(aio, 'socket'), self._loop)
         self._tg.create_task(self._async_on_connect(sock_chan))
 
     async def _async_on_connect(self, sock_chan: RpcChannel) -> None:

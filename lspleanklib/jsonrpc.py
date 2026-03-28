@@ -174,24 +174,22 @@ class IncommingResponses:
             warn(f"Unexpected response with id: {msg_id}")
 
 
-class JsonRpcMsgConnection(typing.Protocol):
-    async def close(self) -> None: ...
+class RpcMsgConnection(typing.Protocol):
+    async def close_and_wait(self) -> None: ...
     async def write(self, msg: JsonRpcMsg) -> None: ...
     async def read(self) -> JsonRpcMsg | None: ...
     @property
     def name(self) -> str: ...
 
 
-class JsonRpcMsgStream(JsonRpcMsgConnection):
+class JsonRpcMsgStream(RpcMsgConnection):
     def __init__(self, aio: DuplexStream, name: str):
         self._aio = aio
         self._name = name
 
-    async def close(self) -> None:
+    async def close_and_wait(self) -> None:
         self._aio.aout.close()
-
-    def is_closing(self) -> bool:
-        return self._aio.aout.is_closing()
+        await self._aio.aout.wait_closed()
 
     async def write(self, msg: JsonRpcMsg) -> None:
         await write_message(self._aio.aout, msg.to_lsp_obj())
@@ -210,7 +208,7 @@ class JsonRpcMsgStream(JsonRpcMsgConnection):
 
 
 class RpcInterface(typing.Protocol):
-    async def close(self) -> None: ...
+    async def close_and_wait(self) -> None: ...
     async def notify(self, mc: MethodCall) -> None: ...
     async def request(
         self, mc: MethodCall, fix_id: str | None = None
@@ -218,13 +216,13 @@ class RpcInterface(typing.Protocol):
 
 
 class RemoteRpcProxy(RpcInterface):
-    def __init__(self, conn: JsonRpcMsgConnection, loop: AbstractEventLoop):
+    def __init__(self, conn: RpcMsgConnection, loop: AbstractEventLoop):
         self._conn = conn
         self._expecting: IncommingResponses | None = IncommingResponses(loop)
 
-    async def close(self) -> None:
+    async def close_and_wait(self) -> None:
         log.debug(f"closing {self.__class__.__name__}")
-        await self._conn.close()
+        await self._conn.close_and_wait()
 
     async def notify(self, mc: MethodCall) -> None:
         msg = JsonRpcMsg(mc)
@@ -282,12 +280,12 @@ class NoClient(RpcInterface):
         warn(f"No client RPC implementation for '{mc.method}' request")
         return future_error(ErrorCodes.MethodNotFound)
 
-    async def close(self) -> None:
+    async def close_and_wait(self) -> None:
         pass
 
 
 async def await_send_response(
-    conn: JsonRpcMsgConnection, tbd: Awaitable[Response], msg_id: int | str | None
+    conn: RpcMsgConnection, tbd: Awaitable[Response], msg_id: int | str | None
 ) -> None:
     try:
         response = await tbd
@@ -297,8 +295,8 @@ async def await_send_response(
         log.exception(ex)
 
 
-class JsonRpcChannel(RpcChannel):
-    def __init__(self, conn: JsonRpcMsgConnection, loop: AbstractEventLoop):
+class RpcMsgChannel(RpcChannel):
+    def __init__(self, conn: RpcMsgConnection, loop: AbstractEventLoop):
         self._conn = conn
         self._proxy = RemoteRpcProxy(conn, loop)
 
@@ -306,8 +304,8 @@ class JsonRpcChannel(RpcChannel):
     def proxy(self) -> RpcInterface:
         return self._proxy
 
-    async def pump(self, impl: RpcInterface = NoClient()) -> None:
-        """Listen for JSONRPC message on stream input until stream EOF.
+    async def pump(self, impl: RpcInterface) -> None:
+        """Listen for JSONRPC message on connection input until stream EOF.
 
         impl: implements the methods for RPC calls received on stream input
         """
@@ -325,9 +323,9 @@ class JsonRpcChannel(RpcChannel):
                             coro = await_send_response(self._conn, tbd, msg.id)
                             response_tasks.create_task(coro)
                 finally:
-                    await impl.close()
+                    await impl.close_and_wait()
                     self._proxy.end_of_incomming_responses()
                     log.debug(f"{self._conn.name} pump done reading responses")
         finally:
             log.debug(f"{self._conn.name} pump closing connection")
-            await self._conn.close()
+            await self._conn.close_and_wait()

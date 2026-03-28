@@ -5,7 +5,7 @@ from typing import BinaryIO, Awaitable
 from concurrent.futures import ThreadPoolExecutor
 
 from lspleanklib.aio import DuplexStream, MinimalReader, ReadFilePump, WriterFileAdapter
-from lspleanklib.jsonrpc import JsonRpcChannel, JsonRpcMsgStream, MethodCall, Response, RpcInterface
+from lspleanklib.jsonrpc import RpcMsgChannel, JsonRpcMsgStream, MethodCall, Response, RpcInterface
 from lspleanklib.lake import LeankLakeFactory
 from lspleanklib.lspleank import RpcSubprocessFactory, multi_leank_lsp_server
 from lspleanklib.util import LspAny
@@ -48,8 +48,8 @@ async def aio_xpipe():
 @contextlib.asynccontextmanager
 async def jsonrpc_xpipe():
     async with aio_xpipe() as (outer, inner):
-        outer_chan = JsonRpcChannel(outer, 'outer')
-        inner_chan = JsonRpcChannel(inner, 'inner')
+        outer_chan = RpcMsgChannel(outer, 'outer')
+        inner_chan = RpcMsgChannel(inner, 'inner')
         yield (outer_chan, inner_chan)
 
 
@@ -87,7 +87,7 @@ async def ok_server_loop(stdio: DuplexStream, cmd_line) -> bool:
     loop = asyncio.get_running_loop()
     lake_factory = RpcSubprocessFactory(cmd_line, loop)
     leank_factory = LeankLakeFactory(lake_factory)
-    client_chan = JsonRpcChannel(JsonRpcMsgStream(stdio, 'stdio'), loop)
+    client_chan = RpcMsgChannel(JsonRpcMsgStream(stdio, 'stdio'), loop)
     async with asyncio.TaskGroup() as tg:
         server = multi_leank_lsp_server(leank_factory, client_chan.proxy, tg)
         tg.create_task(client_chan.pump(server))

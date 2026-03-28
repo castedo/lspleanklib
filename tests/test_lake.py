@@ -4,7 +4,7 @@ import asyncio, contextlib, os, shutil
 from pathlib import Path
 
 from lspleanklib.jsonrpc import (
-    JsonRpcChannel,
+    RpcMsgChannel,
     JsonRpcMsgStream,
     MethodCall as MC,
     Response,
@@ -33,7 +33,7 @@ from util import ok_server_loop
 async def server_session(editor_impl: RpcInterface, server_cmd: list[str]):
     loop = asyncio.get_running_loop()
     async with aio_xpipe() as (outer, inner):
-        outer_chan = JsonRpcChannel(JsonRpcMsgStream(outer, 'outer'), loop)
+        outer_chan = RpcMsgChannel(JsonRpcMsgStream(outer, 'outer'), loop)
         client_pump_task = asyncio.create_task(outer_chan.pump(editor_impl))
         server_task = asyncio.create_task(ok_server_loop(inner, server_cmd))
         yield outer_chan.proxy
@@ -53,7 +53,7 @@ async def server_session_init(client: RpcInterface, server_cmd: list[str], root:
         aw_resp = await rpc.request(MC('shutdown'))
         assert await aw_resp == Response(None)
         await rpc.notify(MC('exit'))
-        await rpc.close()
+        await rpc.close_and_wait()
 
 
 async def test_sub_lake():

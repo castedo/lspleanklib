@@ -14,7 +14,7 @@ from .aio import DuplexStream, ReadFilePump, WriterFileAdapter
 from .cli import version
 from .jsonrpc import (
     ErrorCodes,
-    JsonRpcChannel,
+    RpcMsgChannel,
     JsonRpcMsgStream,
     MethodCall,
     Response,
@@ -74,7 +74,7 @@ def leank_init_response(init_response: Response) -> Response:
 class LspInitializer(typing.Protocol):
     async def on_initialize(self, init_params: LspObject) -> Response: ...
     async def do_initialized(self) -> RpcInterface | None: ...
-    async def close(self) -> None: ...
+    async def close_and_wait(self) -> None: ...
 
 
 class LspServer(RpcInterface):
@@ -85,10 +85,10 @@ class LspServer(RpcInterface):
     def was_initialized(self) -> bool:
         return self._initialized is not None
 
-    async def close(self) -> None:
+    async def close_and_wait(self) -> None:
         if self._initialized:
-            await self._initialized.close()
-        await self._initializer.close()
+            await self._initialized.close_and_wait()
+        await self._initializer.close_and_wait()
 
     async def request(
         self, mc: MethodCall, fix_id: str | None = None
@@ -130,7 +130,7 @@ class RpcSubprocess(RpcChannel):
         assert proc.stdin and proc.stdout
         self._proc = proc
         aio = DuplexStream(proc.stdout, proc.stdin)
-        self._sub_con = JsonRpcChannel(JsonRpcMsgStream(aio, 'subproc'), loop)
+        self._sub_con = RpcMsgChannel(JsonRpcMsgStream(aio, 'subproc'), loop)
 
     @property
     def proxy(self) -> RpcInterface:
@@ -184,7 +184,7 @@ async def create_rpc_socket_channel(
     assert loop == asyncio.get_running_loop()
     (reader, writer) = await asyncio.open_unix_connection(sock_path)
     aio = DuplexStream(reader, writer)
-    return JsonRpcChannel(JsonRpcMsgStream(aio, 'socket'), loop)
+    return RpcMsgChannel(JsonRpcMsgStream(aio, 'socket'), loop)
 
 
 class RpcSocketFactory(RpcDirChannelFactory):
@@ -263,9 +263,9 @@ class ChannelLspInitializer(LspInitializer):
         else:
             return None
 
-    async def close(self) -> None:
+    async def close_and_wait(self) -> None:
         if self._initializing:
-            await self._initializing.close()
+            await self._initializing.close_and_wait()
 
 
 def channel_lsp_server(
@@ -285,7 +285,7 @@ class LspProgram(AsyncProgram):
 
     async def amain(self, stdio: DuplexStream, loop: AbstractEventLoop) -> int:
         try:
-            client_chan = JsonRpcChannel(JsonRpcMsgStream(stdio, 'stdio'), loop)
+            client_chan = RpcMsgChannel(JsonRpcMsgStream(stdio, 'stdio'), loop)
             async with TaskGroup() as tg:
                 server = await self.start_server(client_chan.proxy, tg)
                 tg.create_task(client_chan.pump(server))
