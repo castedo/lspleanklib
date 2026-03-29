@@ -6,12 +6,12 @@ from collections.abc import Awaitable
 from pathlib import Path
 
 from .jsonrpc import (
-    ErrorCodes,
+    ErrorCode,
     MethodCall,
     Response,
     RpcChannel,
     RpcInterface,
-    future_error,
+    awaitable_error,
 )
 from .server import (
     RpcDirChannelFactory,
@@ -36,7 +36,7 @@ class LakeClient(RpcInterface):
         self, mc: MethodCall, fix_id: str | None = None
     ) -> Awaitable[Response]:
         if mc.method == "client/registerCapability":
-            return future_error(ErrorCodes.MethodNotFound)
+            return awaitable_error(ErrorCode.MethodNotFound)
         return await self.client.request(mc, fix_id)
 
 

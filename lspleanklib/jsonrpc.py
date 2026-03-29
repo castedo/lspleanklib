@@ -14,7 +14,7 @@ from .aio import DuplexStream, MinimalReader, MinimalWriter
 from .util import LspAny, LspObject, log
 
 
-class ErrorCodes(enum.IntEnum):
+class ErrorCode(enum.IntEnum):
     UnknownErrorCode = -32001
     ServerNotInitialized = -32002
     InvalidRequest = -32600
@@ -22,6 +22,9 @@ class ErrorCodes(enum.IntEnum):
     InvalidParams = -32602
     InternalError = -32603
     RequestFailed = -32803
+
+
+ErrorCodes = ErrorCode  # in the LSP specification the name is unpythonic plural
 
 
 async def write_message(stream: MinimalWriter, msg: Mapping[str, Any]) -> None:
@@ -80,11 +83,11 @@ class ResponseError:
     def from_lsp_obj(msg: LspObject) -> ResponseError:
         code = msg.get('code')
         if not isinstance(code, int):
-            code = ErrorCodes.UnknownErrorCode
+            code = ErrorCode.UnknownErrorCode
         return ResponseError(code, str(msg.get('message')), msg.get('data'))
 
 
-async def future_error(ec: ErrorCodes) -> Response:
+async def awaitable_error(ec: ErrorCode) -> Response:
     return Response.from_error_code(ec)
 
 
@@ -104,7 +107,7 @@ class Response:
             return Response(None, ResponseError.from_lsp_obj(error))
 
     @staticmethod
-    def from_error_code(ec: ErrorCodes) -> Response:
+    def from_error_code(ec: ErrorCode) -> Response:
         return Response(None, ResponseError(ec, ec.name))
 
     def to_lsp_obj(self) -> LspObject:
@@ -229,12 +232,12 @@ class RemoteRpcProxy(RpcInterface):
     ) -> Awaitable[Response]:
         if self._expecting is None:
             warn('request called on closed or closing RPC connection')
-            return future_error(ErrorCodes.InternalError)
+            return awaitable_error(ErrorCode.InternalError)
         (msg_id, expect) = self._expecting.prepare(fix_id)
         try:
             await self._conn.write(JsonRpcMsg(mc, msg_id))
         except RuntimeError:
-            error_response = Response.from_error_code(ErrorCodes.InternalError)
+            error_response = Response.from_error_code(ErrorCode.InternalError)
             self._expecting.got_response(error_response, msg_id)
             log.exception(f"Write failed for RPC call '{mc.method}'")
         return expect
@@ -267,7 +270,7 @@ class NoClient(RpcInterface):
         self, mc: MethodCall, fix_id: str | None = None
     ) -> Awaitable[Response]:
         warn(f"No client RPC implementation for '{mc.method}' request")
-        return future_error(ErrorCodes.MethodNotFound)
+        return awaitable_error(ErrorCode.MethodNotFound)
 
     async def close_and_wait(self) -> None:
         pass

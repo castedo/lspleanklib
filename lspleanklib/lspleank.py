@@ -11,12 +11,12 @@ from warnings import warn
 
 from .cli import split_cmd_line, version
 from .jsonrpc import (
-    ErrorCodes,
+    ErrorCode,
     MethodCall,
     Response,
     RpcChannel,
     RpcInterface,
-    future_error,
+    awaitable_error,
 )
 from lspleanklib.lake import LeankLakeFactory
 from .server import (
@@ -154,7 +154,7 @@ class LeankManager(RpcInterface):
             if server:
                 return await server.request(mc, fix_id)
             else:
-                return future_error(ErrorCodes.InternalError)
+                return awaitable_error(ErrorCode.InternalError)
         elif mc.method == 'shutdown':
             async for server in self._leank_servers():
                 aw_response = await server.request(MethodCall('shutdown'))
@@ -164,7 +164,7 @@ class LeankManager(RpcInterface):
             return await self._workspace_symbol(mc)
         else:
             warn(f"Unexpected request '{mc.method}'")
-            return future_error(ErrorCodes.MethodNotFound)
+            return awaitable_error(ErrorCode.MethodNotFound)
 
     def set_client_capabilities(self, capabilities: LspObject) -> None:
         self._client_capabilities = capabilities
@@ -193,7 +193,7 @@ class LeankManager(RpcInterface):
             elif isinstance(response.result, Sequence):
                 result.extend(response.result)
             else:
-                return future_error(ErrorCodes.RequestFailed)
+                return awaitable_error(ErrorCode.RequestFailed)
         return awaitable(Response(result))
 
     async def _leank_servers(self) -> AsyncIterator[RpcInterface]:
@@ -222,7 +222,7 @@ class MultiLeankLspInitializer(LspInitializer):
 
     async def on_initialize(self, init_params: LspObject) -> Response:
         if self._initializing:
-            return Response.from_error_code(ErrorCodes.InvalidRequest)
+            return Response.from_error_code(ErrorCode.InvalidRequest)
         # TODO warn when folders inconsistent with Lake workspaces
         self._workspace_folders.extend(workspace_folders(init_params))
         lsp_root = get_uri_path(init_params, 'rootUri')

@@ -13,14 +13,14 @@ from typing import Sequence
 from .aio import DuplexStream, ReadFilePump, WriterFileAdapter
 from .cli import version
 from .jsonrpc import (
-    ErrorCodes,
+    ErrorCode,
     RpcMsgChannel,
     JsonRpcMsgStream,
     MethodCall,
     Response,
     RpcChannel,
     RpcInterface,
-    future_error,
+    awaitable_error,
     json_rpc_channel,
 )
 from .util import LspObject, awaitable, get_obj, get_uri_path, log
@@ -100,11 +100,11 @@ class LspServer(RpcInterface):
                 response = await self._initializer.on_initialize(init_params)
                 return awaitable(response)
             else:
-                return future_error(ErrorCodes.InvalidRequest)
+                return awaitable_error(ErrorCode.InvalidRequest)
         elif self._initialized:
             return await self._initialized.request(mc, fix_id)
         else:
-            return future_error(ErrorCodes.ServerNotInitialized)
+            return awaitable_error(ErrorCode.ServerNotInitialized)
 
     async def notify(self, mc: MethodCall) -> None:
         got = f"Got '{mc.method}' notification"
@@ -236,7 +236,7 @@ class ChannelLspInitializer(LspInitializer):
 
     async def on_initialize(self, init_params: LspObject) -> Response:
         if self._initializing:
-            return Response.from_error_code(ErrorCodes.InvalidRequest)
+            return Response.from_error_code(ErrorCode.InvalidRequest)
         lsp_root = get_uri_path(init_params, 'rootUri')
         init_call = leank_init_call(lsp_root, text_doc_caps(init_params))
         channel = await self._factory.anew(lsp_root)
