@@ -167,8 +167,22 @@ class RpcSubprocessFactory(RpcDirChannelFactory):
 def get_user_socket_path() -> Path:
     if not OS_WITH_UNIX_DOMAIN_SOCKET_SUPPORT:
         raise NotImplementedError("This system does not support UNIX sockets")
-    xdg_dir = Path(os.environ.get("XDG_RUNTIME_DIR", "/tmp"))
-    return xdg_dir / "lspleank.sock"
+    try:
+        import platformdirs
+
+        runtime_dir = platformdirs.user_runtime_path()
+    except ImportError:
+        if sys.platform == "win32":
+            raise NotImplementedError(
+                "Python package 'platformdirs' must be installed on Windows"
+            )
+        elif sys.platform == "darwin":
+            runtime_dir = Path.home() / "Library/Caches/TemporaryItems"
+        else:
+            runtime_dir = Path(os.environ.get("XDG_RUNTIME_DIR", "/tmp"))
+    lean_runtime_dir = runtime_dir / "lean"
+    lean_runtime_dir.mkdir(exist_ok=True)
+    return lean_runtime_dir / "lspleank.sock"
 
 
 def find_socket_path(work_root: Path) -> Path | None:
@@ -202,16 +216,13 @@ class RpcStartSocketFactory(RpcDirChannelFactory):
         self._start_cmd = list(start_cmd)
 
     async def anew(self, work_root: Path) -> RpcChannel:
-        # ignoring work_root because user socket handles any work root
+        # ignoring work_root because user runtime socket only uses LSP root uri
         if not hasattr(asyncio, 'open_unix_connection'):
             raise NotImplementedError("This system does not support UNIX sockets")
-        xdg_dir = Path(os.environ.get("XDG_RUNTIME_DIR", "/tmp"))
-        if not xdg_dir.exists():
-            raise RuntimeError("Unable to find XDG_RUNTIME_DIR")
-        sock_path = xdg_dir / "lspleank.sock"
+        sock_path = get_user_socket_path()
         if not sock_path.exists():
             if not self._start_cmd:
-                raise RuntimeError("Missing lspleank user socket start command")
+                raise RuntimeError("Missing lspleank start command")
             proc = await asyncio.create_subprocess_exec(
                 *self._start_cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE
             )

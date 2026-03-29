@@ -16,6 +16,9 @@ classifiers = [
 ]
 keywords = ["lsp", "language-server-protocol","jsonrpc"]
 
+[project.optional-dependencies]
+crossplatform = ["platformdirs"]
+
 [project.scripts]
 lspleank = "lspleanklib.lspleank:main"
 lakelspout = "lspleanklib.lakelspout:main"
