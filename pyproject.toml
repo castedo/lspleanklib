@@ -5,16 +5,15 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "lspleanklib"
 dynamic = ["version"]
-description = "Link LSP-enabled editors to Lake LSP servers"
+description = "LSP proxy and library to link LSP-enabled editors to Lake LSP servers"
 authors = [{name = "Castedo Ellerman", email = "castedo@castedo.com"}]
-license = "MIT"
-license-files = ["LICENSE"]
-requires-python = ">=3.11"
+license = {file = "LICENSE"}
+requires-python = ">=3.12"
 classifiers = [
     "Programming Language :: Python :: 3",
     "Operating System :: POSIX",
 ]
-keywords = ["lsp", "language-server-protocol","jsonrpc"]
+keywords = ["lsp", "language-server-protocol", "jsonrpc"]
 
 [project.optional-dependencies]
 crossplatform = ["platformdirs"]
