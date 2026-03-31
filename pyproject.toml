@@ -6,6 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "lspleanklib"
 dynamic = ["version"]
 description = "LSP proxy and library to link LSP-enabled editors to Lake LSP servers"
+readme = "README.md"
 authors = [{name = "Castedo Ellerman", email = "castedo@castedo.com"}]
 license = {file = "LICENSE"}
 requires-python = ">=3.12"
