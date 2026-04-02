@@ -1,5 +1,5 @@
 """
-Link LSP-enabled editors to Lake LSP servers
+Stdio LSP server multiplexing one or more Lake LSP servers.
 """
 
 from __future__ import annotations
@@ -251,25 +251,40 @@ def multi_leank_lsp_server(
 
 
 class LspLeankProgram(LspProgram):
-    command: str
+    subcmd: str
     extra_args: list[str]
 
     def __init__(self, cmd_line_args: list[str]):
         cli = argparse.ArgumentParser(
             prog='lspleank',
+            description=__doc__,
             usage=(
                 "%(prog)s  [-h] [--version] {connect,lake,stdio}"
                 " [-- external_command ...]"
             ),
-            description=__doc__,
         )
         cli.add_argument('--version', action='version', version=version())
-        cli.add_argument('command', choices=['connect', 'lake', 'stdio'])
+        sub = cli.add_subparsers(dest='subcmd', required=True)
+
+        sub.add_parser(
+            'connect',
+            help='connect to an lspleank socket service after starting it with the external command',
+        )
+
+        sub.add_parser(
+            'lake',
+            help="internally use lakelspout to run Leank LSP servers",
+        )
+
+        sub.add_parser(
+            'stdio',
+            help='use the external command to run stdio Leank LSP servers',
+        )
 
         (cmd_line_args, self.extra_args) = split_cmd_line(cmd_line_args)
         cli.parse_args(cmd_line_args, self)
         if not self.extra_args:
-            match self.command:
+            match self.subcmd:
                 case 'lake':
                     self.extra_args = ['lake', 'serve']
                 case 'stdio':
@@ -278,13 +293,13 @@ class LspLeankProgram(LspProgram):
     async def start_server(self, editor: RpcInterface, tg: TaskGroup) -> LspServer:
         loop = asyncio.get_running_loop()
         default_factory: RpcDirChannelFactory
-        if self.command == 'connect':
+        if self.subcmd == 'connect':
             default_factory = RpcStartSocketFactory(self.extra_args)
         else:
             default_factory = RpcSubprocessFactory(self.extra_args, loop=loop)
         chan_factory: RpcDirChannelFactory
         chan_factory = RpcSocketFactory(default_factory)
-        if self.command == 'lake':
+        if self.subcmd == 'lake':
             chan_factory = LeankLakeFactory(chan_factory)
         return multi_leank_lsp_server(chan_factory, editor, tg)
 

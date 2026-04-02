@@ -1,5 +1,5 @@
 """
-Adapt Lake LSP server to be a Leank LSP server
+Adapt a Lake LSP server as a Leank service/server.
 """
 
 import asyncio, argparse, logging, os, sys
@@ -113,9 +113,26 @@ def main(cmd_line_args: list[str] | None = None) -> int:
     logging.basicConfig()
     logging.captureWarnings(True)
 
-    cli = argparse.ArgumentParser(prog='lakelspout', description=__doc__)
+    cli = argparse.ArgumentParser(
+        prog='lakelspout',
+        description=__doc__,
+        usage=(
+            "%(prog)s  [-h] [--version] {work,stdio}"
+            " [-- lake_serve_command ...]"
+        ),
+    )
     cli.add_argument('--version', action='version', version=version())
-    cli.add_argument('command', choices=['work', 'stdio'])
+    sub = cli.add_subparsers(dest='subcmd', required=True)
+
+    sub.add_parser(
+        'work',
+        help='run as a Lake workspace specific lspleank socket service',
+    )
+
+    sub.add_parser(
+        'stdio',
+        help='run as a stdio Leank LSP server',
+    )
 
     if cmd_line_args is None:
         cmd_line_args = sys.argv[1:]
@@ -123,7 +140,7 @@ def main(cmd_line_args: list[str] | None = None) -> int:
     args = cli.parse_args(cli_args)
 
     aprog: AsyncProgram
-    match args.command:
+    match args.subcmd:
         case 'work':
             aprog = WorkProgram(extra_args)
         case 'stdio':
