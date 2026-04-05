@@ -256,7 +256,8 @@ def multi_leank_lsp_server(
     return LspServer(MultiLeankLspInitializer(factory, editor, tg))
 
 
-STDIO_LOG_FILENAME = "lspleank-stdio.log"
+LOG_FILENAME = "lspleank.log"
+STDIO_LOG_FILENAME = "lspleank-stdio.json"
 
 
 class LspLeankProgram(LspProgram):
@@ -277,7 +278,7 @@ class LspLeankProgram(LspProgram):
         cli.add_argument(
             '--debug',
             action='store_true',
-            help=f"log LSP messages to {STDIO_LOG_FILENAME}",
+            help=f"log to {LOG_FILENAME} & {STDIO_LOG_FILENAME}",
         )
         sub = cli.add_subparsers(dest='subcmd', required=True)
 
@@ -304,6 +305,16 @@ class LspLeankProgram(LspProgram):
                     self.extra_args = ['lake', 'serve']
                 case 'stdio':
                     self.extra_args = ['lakelspout', 'stdio']
+        if self.debug:
+            log.setLevel(logging.DEBUG)  # only for lspleanklib
+            fh = logging.FileHandler(lean_log_path() / LOG_FILENAME)
+            fh.setLevel(logging.DEBUG)
+            fmt = logging.Formatter(
+                fmt='%(asctime)s.%(msecs)03d|%(levelname)s|%(name)s|%(message)s',
+                datefmt='%Y-%m-%dT%H:%M:%S',
+            )
+            fh.setFormatter(fmt)
+            logging.root.addHandler(fh)
 
     @contextmanager
     def stdio_connection(self,  stdio: DuplexStream) -> Iterator[RpcMsgConnection]:
