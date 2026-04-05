@@ -45,4 +45,5 @@ docstring-code-format = false
 [tool.ruff.lint]
 ignore = [
     "E401",  # Multiple imports on one line
+    "E712",  # Avoid equality comparisons to `True`
 ]

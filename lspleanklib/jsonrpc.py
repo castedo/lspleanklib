@@ -3,11 +3,11 @@ JSON-RPC for Language Server Protocol
 """
 
 from __future__ import annotations
-import asyncio, copy, enum, json, typing
+import asyncio, copy, datetime, enum, json, typing
 from asyncio import AbstractEventLoop, Future, TaskGroup
 from collections.abc import Awaitable, Mapping, Sequence
 from dataclasses import asdict, dataclass
-from typing import Any, TypeAlias
+from typing import Any, TextIO, TypeAlias
 from warnings import warn
 
 from .aio import DuplexStream, MinimalReader, MinimalWriter
@@ -330,3 +330,33 @@ def json_rpc_channel(
 ) -> RpcMsgChannel:
     stream = JsonRpcMsgStream(DuplexStream(ain, aout))
     return RpcMsgChannel(stream, name=name, loop=loop)
+
+
+class RpcMsgFileLogger(RpcMsgConnection):
+    def __init__(self, conn: RpcMsgConnection, log_file: TextIO):
+        self._conn = conn
+        self._log_file = log_file
+        self._log(state='open')
+
+    async def close_and_wait(self) -> None:
+        self._log(state='closing')
+        await self._conn.close_and_wait()
+        self._log(state='closed')
+
+    async def write(self, msg: JsonRpcMsg) -> None:
+        await self._conn.write(msg)
+        self._log(sent=msg.to_lsp_obj())
+
+    async def read(self) -> JsonRpcMsg | None:
+        msg = await self._conn.read()
+        if msg is None:
+            self._log(state='eof')
+        else:
+            self._log(got=msg.to_lsp_obj())
+        return msg
+
+    def _log(self, **kwags: LspAny) -> None:
+            t = datetime.datetime.now(datetime.UTC).time().isoformat()
+            line = json.dumps({'t': t, **kwags}, separators=(',', ':'))
+            self._log_file.write(line)
+            self._log_file.write("\n")

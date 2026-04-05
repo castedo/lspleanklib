@@ -24,6 +24,7 @@ from .server import (
 
 class StdioProgram(LspProgram):
     def __init__(self, lake_cmd: list[str]):
+        super().__init__()
         self._lake_cmd = lake_cmd
 
     async def start_server(self, client: RpcInterface, tg: TaskGroup) -> LspServer:

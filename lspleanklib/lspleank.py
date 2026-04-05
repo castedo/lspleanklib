@@ -6,16 +6,21 @@ from __future__ import annotations
 import argparse, asyncio, logging, sys
 from asyncio import Future, TaskGroup
 from collections.abc import AsyncIterator, Awaitable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from pathlib import Path
 from warnings import warn
 
+from .aio import DuplexStream
 from .cli import split_cmd_line, version
 from .jsonrpc import (
     ErrorCode,
+    JsonRpcMsgStream,
     MethodCall,
     Response,
     RpcChannel,
     RpcInterface,
+    RpcMsgConnection,
+    RpcMsgFileLogger,
     awaitable_error,
 )
 from lspleanklib.lake import LeankLakeFactory
@@ -28,6 +33,7 @@ from .server import (
     RpcStartSocketFactory,
     RpcSubprocessFactory,
     async_stdio_main,
+    lean_log_path,
     leank_init_call,
     leank_init_response,
     text_doc_caps,
@@ -250,20 +256,29 @@ def multi_leank_lsp_server(
     return LspServer(MultiLeankLspInitializer(factory, editor, tg))
 
 
+STDIO_LOG_FILENAME = "lspleank-stdio.log"
+
+
 class LspLeankProgram(LspProgram):
     subcmd: str
     extra_args: list[str]
+    debug: bool
 
     def __init__(self, cmd_line_args: list[str]):
         cli = argparse.ArgumentParser(
             prog='lspleank',
             description=__doc__,
             usage=(
-                "%(prog)s  [-h] [--version] {connect,lake,stdio}"
+                "%(prog)s  [-h] [--version] [--debug] {connect,lake,stdio}"
                 " [-- external_command ...]"
             ),
         )
         cli.add_argument('--version', action='version', version=version())
+        cli.add_argument(
+            '--debug',
+            action='store_true',
+            help=f"log LSP messages to {STDIO_LOG_FILENAME}",
+        )
         sub = cli.add_subparsers(dest='subcmd', required=True)
 
         sub.add_parser(
@@ -289,6 +304,17 @@ class LspLeankProgram(LspProgram):
                     self.extra_args = ['lake', 'serve']
                 case 'stdio':
                     self.extra_args = ['lakelspout', 'stdio']
+
+    @contextmanager
+    def stdio_connection(self,  stdio: DuplexStream) -> Iterator[RpcMsgConnection]:
+        stdio_conn: RpcMsgConnection = JsonRpcMsgStream(stdio)
+        if self.debug:
+            log_path = lean_log_path() / STDIO_LOG_FILENAME
+            with open(log_path, 'a', buffering=1) as log_file:
+                stdio_conn = RpcMsgFileLogger(stdio_conn, log_file)
+                yield stdio_conn
+        else:
+            yield stdio_conn
 
     async def start_server(self, editor: RpcInterface, tg: TaskGroup) -> LspServer:
         loop = asyncio.get_running_loop()

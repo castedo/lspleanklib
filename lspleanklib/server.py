@@ -5,16 +5,17 @@ Generic server code
 from __future__ import annotations
 import abc, asyncio, os, sys, signal, threading, typing
 from asyncio import AbstractEventLoop, TaskGroup, subprocess
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Iterator, Sequence
+from contextlib import contextmanager
 from pathlib import Path
 from warnings import warn
-from typing import Sequence
 
 from .aio import DuplexStream, ReadFilePump, WriterFileAdapter
 from .cli import version
 from .jsonrpc import (
     ErrorCode,
     RpcMsgChannel,
+    RpcMsgConnection,
     JsonRpcMsgStream,
     MethodCall,
     Response,
@@ -170,18 +171,16 @@ def get_user_socket_path() -> Path:
     try:
         import platformdirs
 
-        runtime_dir = platformdirs.user_runtime_path()
+        runtime_dir = platformdirs.user_runtime_path(opinion=False)
     except ImportError:
         if sys.platform == "win32":
-            raise NotImplementedError(
-                "Python package 'platformdirs' must be installed on Windows"
-            )
+            raise
         elif sys.platform == "darwin":
             runtime_dir = Path.home() / "Library/Caches/TemporaryItems"
         else:
             runtime_dir = Path(os.environ.get("XDG_RUNTIME_DIR", "/tmp"))
     lean_runtime_dir = runtime_dir / "lean"
-    lean_runtime_dir.mkdir(exist_ok=True)
+    lean_runtime_dir.mkdir(parents=True, exist_ok=True)
     return lean_runtime_dir / "lspleank.sock"
 
 
@@ -281,6 +280,24 @@ def channel_lsp_server(
     return LspServer(ChannelLspInitializer(factory, client, tg))
 
 
+def lean_log_path() -> Path:
+    try:
+        import platformdirs
+
+        log_dir = platformdirs.user_log_path(opinion=False)
+    except ImportError:
+        if sys.platform == "win32":
+            raise
+        elif sys.platform == "darwin":
+            log_dir = Path.home() / "Library/Logs"
+        else:
+            xdg = os.environ.get('XDG_STATE_HOME')
+            log_dir = Path(xdg) if xdg else Path.home() / ".local/state"
+    lean_log_dir = log_dir / "lean"
+    lean_log_dir.mkdir(parents=True, exist_ok=True)
+    return lean_log_dir
+
+
 class AsyncProgram(typing.Protocol):
     async def amain(self, stdio: DuplexStream, *, loop: AbstractEventLoop) -> int: ...
     def on_stdin_eof(self) -> None: ...
@@ -290,12 +307,17 @@ class LspProgram(AsyncProgram):
     @abc.abstractmethod
     async def start_server(self, client: RpcInterface, tg: TaskGroup) -> LspServer: ...
 
+    @contextmanager
+    def stdio_connection(self,  stdio: DuplexStream) -> Iterator[RpcMsgConnection]:
+        yield JsonRpcMsgStream(stdio)
+
     async def amain(self, stdio: DuplexStream, *, loop: AbstractEventLoop) -> int:
         try:
-            stdio_chan = RpcMsgChannel(JsonRpcMsgStream(stdio), name='stdio', loop=loop)
-            async with TaskGroup() as tg:
-                server = await self.start_server(stdio_chan.proxy, tg)
-                tg.create_task(stdio_chan.pump(server))
+            with self.stdio_connection(stdio) as stdio_conn:
+                stdio_chan = RpcMsgChannel(stdio_conn, name='stdio', loop=loop)
+                async with TaskGroup() as tg:
+                    server = await self.start_server(stdio_chan.proxy, tg)
+                    tg.create_task(stdio_chan.pump(server))
             ok = server.was_initialized()
         except Exception as ex:
             log.exception(ex)
