@@ -5,10 +5,23 @@ from typing import BinaryIO, Awaitable
 from concurrent.futures import ThreadPoolExecutor
 
 from lspleanklib.aio import DuplexStream, MinimalReader, ReadFilePump, WriterFileAdapter
-from lspleanklib.jsonrpc import RpcMsgChannel, JsonRpcMsgStream, MethodCall, Response, RpcInterface
-from lspleanklib.lake import LeankLakeFactory
-from lspleanklib.lspleank import RpcSubprocessFactory, multi_leank_lsp_server
+from lspleanklib.jsonrpc import (
+    JsonRpcMsg,
+    MethodCall,
+    Response,
+    RpcInterface,
+    RpcMsgChannel,
+    write_message,
+)
+from lspleanklib.lspleank import LspLeankProgram
 from lspleanklib.util import LspAny
+
+
+async def write_notify(aout, method_call) -> None:
+    await write_message(aout, JsonRpcMsg(method_call).to_lsp_obj())
+
+async def write_request(aout, method_call, id) -> None:
+    await write_message(aout, JsonRpcMsg(method_call, id).to_lsp_obj())
 
 
 async def asyncio_pipe_stream_reader(pipe: BinaryIO, loop) -> MinimalReader:
@@ -83,12 +96,8 @@ class MockEditor(RpcInterface):
         return trivial()
 
 
-async def ok_server_loop(stdio: DuplexStream, cmd_line) -> bool:
+async def ok_server_loop(stdio: DuplexStream, lsp_cmd) -> bool:
     loop = asyncio.get_running_loop()
-    lake_factory = RpcSubprocessFactory(cmd_line, loop=loop)
-    leank_factory = LeankLakeFactory(lake_factory)
-    client_chan = RpcMsgChannel(JsonRpcMsgStream(stdio), name='stdio', loop=loop)
-    async with asyncio.TaskGroup() as tg:
-        server = multi_leank_lsp_server(leank_factory, client_chan.proxy, tg)
-        tg.create_task(client_chan.pump(server))
-    return server.was_initialized()
+    aprog = LspLeankProgram(['lake', '--', *lsp_cmd])
+    retcode = await aprog.amain(stdio, loop=loop)
+    return retcode == 0

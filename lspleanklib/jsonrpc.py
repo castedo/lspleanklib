@@ -282,9 +282,9 @@ async def await_send_response(
     try:
         response = await tbd
         await conn.write(JsonRpcMsg(response, msg_id))
-    except (asyncio.CancelledError, ValueError) as ex:
+    except (asyncio.CancelledError, ValueError):
         # writing to closed aout stream raises ValueError
-        log.exception(ex)
+        log.exception("Unable to write RPC response")
 
 
 class RpcMsgChannel(RpcChannel):

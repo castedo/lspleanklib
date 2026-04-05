@@ -9,9 +9,10 @@ from lspleanklib.jsonrpc import (
     MethodCall as MC,
     Response,
     RpcInterface,
+    read_message,
 )
 
-from util import MockEditor, aio_xpipe, initialize_call
+from util import MockEditor, aio_xpipe, initialize_call, write_notify, write_request
 
 # using `pytestmark` to skip this entire module
 pytestmark = pytest.mark.skipif(
@@ -19,7 +20,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 CASES_DIR = Path(__file__).parent / "cases"
-INIT_BYTES = (CASES_DIR / "vim9-lsp-init.txt").read_bytes()
+INIT_CALL = initialize_call(CASES_DIR / "min_import")
 
 LAKE_CMD = ["lake", "serve"]
 if os.environ.get('SNIFF_LSP'):
@@ -54,6 +55,40 @@ async def server_session_init(client: RpcInterface, server_cmd: list[str], root:
         assert await aw_resp == Response(None)
         await rpc.notify(MC('exit'))
         await rpc.close_and_wait()
+
+
+@pytest.mark.slow
+async def test_aborted_initialization():
+    async with aio_xpipe() as (outer, inner):
+        tloop = asyncio.create_task(ok_server_loop(inner, LAKE_CMD))
+        await write_request(outer.aout, INIT_CALL, 1)
+        await read_message(outer.ain)
+        outer.aout.close()
+        assert await tloop == False
+
+
+@pytest.mark.slow
+async def test_eof_without_shutdown():
+    async with aio_xpipe() as (outer, inner):
+        tloop = asyncio.create_task(ok_server_loop(inner, LAKE_CMD))
+        await write_request(outer.aout, INIT_CALL, 1)
+        await read_message(outer.ain)
+        await write_notify(outer.aout, MC("initialized", {}))
+        outer.aout.close()
+        assert await tloop == False
+
+
+@pytest.mark.slow
+async def test_eof_without_exit():
+    async with aio_xpipe() as (outer, inner):
+        tloop = asyncio.create_task(ok_server_loop(inner, LAKE_CMD))
+        await write_request(outer.aout, INIT_CALL, 1)
+        await read_message(outer.ain)
+        await write_notify(outer.aout, MC("initialized", {}))
+        await write_request(outer.aout, MC("shutdown"), 2)
+        outer.aout.close()
+        # lake expects shutdown but seems ok with no exit notification
+        assert await tloop == True
 
 
 async def test_sub_lake():

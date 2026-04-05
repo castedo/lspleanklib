@@ -12,15 +12,20 @@ from lspleanklib.aio import (
 )
 from lspleanklib.jsonrpc import (
     RpcMsgChannel,
-    JsonRpcMsg,
     JsonRpcMsgStream,
     LspObject,
-    MethodCall,
+    MethodCall as MC,
     read_message,
     write_message,
 )
-
-from util import aio_xpipe, ok_server_loop, pipe_stream_reader
+from util import (
+    aio_xpipe,
+    initialize_call,
+    ok_server_loop,
+    pipe_stream_reader,
+    write_notify,
+    write_request,
+)
 
 
 skipif_no_pylsp = pytest.mark.skipif(
@@ -28,15 +33,10 @@ skipif_no_pylsp = pytest.mark.skipif(
 )
 
 TESTS_DIR = Path(__file__).parent
-TEST_CASES = TESTS_DIR / "cases"
-INIT_BYTES = (TEST_CASES / "vim9-lsp-init.txt").read_bytes()
+CASES_DIR = TESTS_DIR / "cases"
+INIT_BYTES = (CASES_DIR / "vim9-lsp-init.txt").read_bytes()
+INIT_CALL = initialize_call(CASES_DIR / "min_import")
 
-
-async def write_notify(aout, method, params) -> None:
-    await write_message(aout, JsonRpcMsg(MethodCall(method, params)).to_lsp_obj())
-
-async def write_request(aout, method, params, id) -> None:
-    await write_message(aout, JsonRpcMsg(MethodCall(method, params), id).to_lsp_obj())
 
 async def readexactly(f: BinaryIO, n: int) -> bytes:
     loop = asyncio.get_running_loop()
@@ -201,9 +201,9 @@ async def test_loop_pylsp():
         msg = await read_message(outer.ain)
         assert msg['id'] == 1
         assert msg['result']['serverInfo']['name'] == "lspleank"
-        await write_notify(outer.aout, "initialized", {})
-        await write_request(outer.aout, "shutdown", None, 2)
-        await write_notify(outer.aout, "exit", None)
+        await write_notify(outer.aout, MC("initialized", {}))
+        await write_request(outer.aout, MC("shutdown"), 2)
+        await write_notify(outer.aout, MC("exit"))
         outer.aout.close()
         assert await tloop == True
 
@@ -213,8 +213,7 @@ async def test_loop_pylsp():
 async def test_aborted_initialization():
     async with aio_xpipe() as (outer, inner):
         tloop = asyncio.create_task(ok_server_loop(inner, ["pylsp"]))
-        outer.aout.write(INIT_BYTES)
-        await outer.aout.drain()
+        await write_request(outer.aout, INIT_CALL, 1)
         await read_message(outer.ain)
         outer.aout.close()
         assert await tloop == False
@@ -225,10 +224,9 @@ async def test_aborted_initialization():
 async def test_eof_without_shutdown():
     async with aio_xpipe() as (outer, inner):
         tloop = asyncio.create_task(ok_server_loop(inner, ["pylsp"]))
-        outer.aout.write(INIT_BYTES)
-        await outer.aout.drain()
+        await write_request(outer.aout, INIT_CALL, 1)
         await read_message(outer.ain)
-        await write_notify(outer.aout, "initialized", {})
+        await write_notify(outer.aout, MC("initialized", {}))
         outer.aout.close()
         assert await tloop == True
 
@@ -238,11 +236,10 @@ async def test_eof_without_shutdown():
 async def test_eof_without_exit():
     async with aio_xpipe() as (outer, inner):
         tloop = asyncio.create_task(ok_server_loop(inner, ["pylsp"]))
-        outer.aout.write(INIT_BYTES)
-        await outer.aout.drain()
+        await write_request(outer.aout, INIT_CALL, 1)
         await read_message(outer.ain)
-        await write_notify(outer.aout, "initialized", {})
-        await write_request(outer.aout, "shutdown", None, 2)
+        await write_notify(outer.aout, MC("initialized", {}))
+        await write_request(outer.aout, MC("shutdown"), 2)
         outer.aout.close()
         assert await tloop == True
 
@@ -254,8 +251,7 @@ async def test_bogus_stdin(caplog, capsys) -> None:
         outer.aout.write(b"BOGUS")
         await outer.aout.drain()
         outer.aout.close()
-        with pytest.raises(ExceptionGroup):
-            await tloop
+        await tloop == False
         assert await outer.ain.read() == b''
         captured = capsys.readouterr()
         assert captured.out == ""
@@ -273,13 +269,13 @@ async def test_sub_exec_pylsp(cmdline):
     proc = await asyncio.create_subprocess_exec(
         *cmdline, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE
     )
-    proc.stdin.write(INIT_BYTES)
+    await write_request(proc.stdin, INIT_CALL, 1)
     await proc.stdin.drain()
     msg = await read_message(proc.stdout)
     assert msg['id'] == 1
     assert msg['result']['serverInfo']['name'] in {"pylsp", "lspleank"}
-    await write_notify(proc.stdin, "initialized", {})
-    await write_request(proc.stdin, "shutdown", None, 2)
-    await write_notify(proc.stdin, "exit", None)
+    await write_notify(proc.stdin, MC("initialized", {}))
+    await write_request(proc.stdin, MC("shutdown"), 2)
+    await write_notify(proc.stdin, MC("exit"))
     await proc.communicate()
     assert proc.returncode == 0
