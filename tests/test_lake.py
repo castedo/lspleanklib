@@ -11,6 +11,7 @@ from lspleanklib.jsonrpc import (
     RpcInterface,
     read_message,
 )
+from lspleanklib.server import RpcSubprocess
 
 from util import MockEditor, aio_xpipe, initialize_call, write_notify, write_request
 
@@ -156,3 +157,50 @@ async def test_workspace_symbol_search():
             assert response.result[0]['location']['uri'] == (MIN_IMPORT_CASE / 'Min.lean').as_uri()
             assert response.result[1]['name'] == 'foobarsical'
             assert response.result[1]['location']['uri'] == (ALT_IMPORT_CASE / 'Min.lean').as_uri()
+
+
+@pytest.mark.slow
+async def test_lake_capabilities():
+    loop = asyncio.get_running_loop()
+    rootPath = CASES_DIR / 'min_import'
+    with contextlib.chdir(rootPath):
+        editor = MockEditor()
+        chan = await RpcSubprocess.anew(LAKE_CMD, rootPath, loop=loop)
+        pump_task = asyncio.create_task(chan.pump(editor))
+        rpc = chan.proxy
+
+        aw_resp = await rpc.request(initialize_call(rootPath))
+        server_init = await aw_resp
+        await rpc.notify(MC('initialized', {}))
+
+        assert server_init.result.keys() == {'capabilities', 'serverInfo'}
+        assert server_init.result['serverInfo']['name'] == "Lean 4 Server"
+        caps = server_init.result['capabilities']
+        assert caps.keys() == {
+            'callHierarchyProvider',
+            'codeActionProvider',
+            'colorProvider',
+            'completionProvider',
+            'declarationProvider',
+            'definitionProvider',
+            'documentHighlightProvider',
+            'documentSymbolProvider',
+            'experimental',
+            'foldingRangeProvider',
+            'hoverProvider',
+            'inlayHintProvider',
+            'referencesProvider',
+            'renameProvider',
+            'semanticTokensProvider',
+            'signatureHelpProvider',
+            'textDocumentSync',
+            'typeDefinitionProvider',
+            'workspaceSymbolProvider',
+        }
+
+        aw_resp = await rpc.request(MC('shutdown'))
+        assert await aw_resp == Response(None)
+        await rpc.notify(MC('exit'))
+        await rpc.close_and_wait()
+        await pump_task
+        assert not pump_task.exception()

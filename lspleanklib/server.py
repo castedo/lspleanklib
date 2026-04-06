@@ -60,9 +60,11 @@ def leank_init_response(init_response: Response) -> Response:
     if init_response.error is not None:
         return init_response
     if isinstance(init_response.result, dict):
-        # TODO check and standardize server caps
         server_caps = init_response.result.get('capabilities')
         server_caps = server_caps if isinstance(server_caps, dict) else {}
+        server_caps.pop('experimental', None)
+        server_caps.pop('inlayHintProvider', None)
+        server_caps.pop('semanticTokensProvider', None)
     else:
         server_caps = {}
     return Response(
@@ -235,7 +237,15 @@ class RpcStartSocketFactory(RpcDirChannelFactory):
         return await create_rpc_socket_channel(sock_path)
 
 
-class ChannelLspInitializer(LspInitializer):
+class DirChannelLspInitializer(LspInitializer):
+    """LspInitializer that uses LSP rootUri with RpcDirChannelFactory.
+
+    During the initialize request, the LSP rootUri provided by the LSP client
+    will be passed to the RpcDirChannelFactory to create an RpcChannel that
+    handles the RPC calls for the LSP server.
+
+    TaskGroup tg will acquire a Task calling RpcChannel.pump.
+    """
     def __init__(
         self, factory: RpcDirChannelFactory, client: RpcInterface, tg: TaskGroup
     ):
@@ -277,7 +287,7 @@ class ChannelLspInitializer(LspInitializer):
 def channel_lsp_server(
     factory: RpcDirChannelFactory, client: RpcInterface, tg: TaskGroup
 ) -> LspServer:
-    return LspServer(ChannelLspInitializer(factory, client, tg))
+    return LspServer(DirChannelLspInitializer(factory, client, tg))
 
 
 def lean_log_path() -> Path:
