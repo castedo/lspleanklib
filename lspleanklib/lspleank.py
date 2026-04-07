@@ -29,7 +29,6 @@ from .server import (
     LspProgram,
     LspServer,
     RpcDirChannelFactory,
-    RpcSocketFactory,
     RpcStartSocketFactory,
     RpcSubprocessFactory,
     async_stdio_main,
@@ -55,7 +54,6 @@ LAKE_WORKSPACE_MARKER = {
     "lakefile.toml",
     "lakefile.lean",
     "lean-toolchain",
-    ".lspleank.sock",
 }
 
 
@@ -329,13 +327,11 @@ class LspLeankProgram(LspProgram):
 
     async def start_server(self, editor: RpcInterface, tg: TaskGroup) -> LspServer:
         loop = asyncio.get_running_loop()
-        default_factory: RpcDirChannelFactory
-        if self.subcmd == 'connect':
-            default_factory = RpcStartSocketFactory(self.extra_args)
-        else:
-            default_factory = RpcSubprocessFactory(self.extra_args, loop=loop)
         chan_factory: RpcDirChannelFactory
-        chan_factory = RpcSocketFactory(default_factory)
+        if self.subcmd == 'connect':
+            chan_factory = RpcStartSocketFactory(self.extra_args)
+        else:
+            chan_factory = RpcSubprocessFactory(self.extra_args, loop=loop)
         if self.subcmd == 'lake':
             chan_factory = LeankLakeFactory(chan_factory)
         return multi_leank_lsp_server(chan_factory, editor, tg)

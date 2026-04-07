@@ -186,30 +186,10 @@ def get_user_socket_path() -> Path:
     return lean_runtime_dir / "lspleank.sock"
 
 
-def find_socket_path(work_root: Path) -> Path | None:
-    user_sock_path = get_user_socket_path()
-    sock_path = work_root / ".lspleank.sock"
-    if not sock_path.exists():
-        sock_path = user_sock_path
-    return sock_path if sock_path.exists() else None
-
-
 async def create_rpc_socket_channel(sock_path: Path) -> RpcChannel:
     loop = asyncio.get_running_loop()
     (reader, writer) = await asyncio.open_unix_connection(sock_path)
     return json_rpc_channel(reader, writer, name='socket', loop=loop)
-
-
-class RpcSocketFactory(RpcDirChannelFactory):
-    def __init__(self, default: RpcDirChannelFactory):
-        self._default = default
-
-    async def anew(self, work_root: Path) -> RpcChannel:
-        sock_path = find_socket_path(work_root)
-        if sock_path is None:
-            return await self._default.anew(work_root)
-        else:
-            return await create_rpc_socket_channel(sock_path)
 
 
 class RpcStartSocketFactory(RpcDirChannelFactory):

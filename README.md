@@ -127,15 +127,13 @@ Lspleanklib supports two possible connection methods for *Leank LSP*:
   `lspleank.sock` within a `lean` subdirectory inside the *user runtime directory*
   (see the [Runtime directory reference](#runtime-directory-reference) section).
 
-When the `lspleank` program (and thus also `webleank`) makes Leank LSP connections, it prioritizes
-the user runtime directory socket first and then defaults to a subprocess stdio
-connection (depending on the subcommand).
+The `lspleank stdio` and `lspleank lake` commands make subprocess stdio connections,
+while the `lspleank connect` command connects to the user runtime directory socket.
 
 A Leank LSP session is per Lake workspace and does not support "workspace" as defined by an
 editor. The program `lspleank` multiplexes Leank LSP
 sessions into a single unified standard LSP session, which appears as a single workspace to an
 LSP-compatible editor.
-
 
 
 Runtime directory reference
