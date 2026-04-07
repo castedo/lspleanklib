@@ -23,7 +23,7 @@ package `platformdirs` to be installed. The pip install package specification
 
 This package also includes two CLI utilities for advanced usage:
 * `lspleank`: an LSP server used by Webleank to run inside an editor process
-* `lakelspout`: a Lake LSP proxy that connects via local UNIX domain sockets to lspleank
+* `lakelspout`: a stdio LSP proxy that adapts Lake LSP to Leank LSP
 
 For more information, visit [Webleank](https://gitlab.com/castedo/webleank) and
 [lean.castedo.com](https://lean.castedo.com).
@@ -91,26 +91,18 @@ processes.
 
 ```
 $ lakelspout -h
-usage: lakelspout  [-h] [--version] {work,stdio} [-- lake_serve_command ...]
+usage: lakelspout  [-h] [--version] {stdio} [-- lake_serve_command ...]
 
 Adapt a Lake LSP server as a Leank service/server.
 
 positional arguments:
-  {work,stdio}
-    work                run as a Lake workspace-specific lspleank socket service
+  {stdio}
     stdio               run as a stdio Leank LSP server
 
 options:
   -h, --help            show this help message and exit
   --version             show program's version number and exit
 ```
-
-#### Subcommand `work`
-
-Runs as a Leank service, creating a `.lspleank.sock` local UNIX domain socket in the
-current directory. This subcommand is intended to be run from a Lake workspace directory.
-`lspleank` will use this Leank service process when opening this Lake workspace.
-
 
 #### Subcommand `stdio`
 
@@ -128,19 +120,16 @@ It serves as a simplified intermediary LSP between:
 * the standard LSP expected by any LSP-compatible editor, and
 * the non-standard LSP variant implemented by `lake serve`.
 
-Lspleanklib supports three possible connection methods for *Leank LSP*:
+Lspleanklib supports two possible connection methods for *Leank LSP*:
 
-* subprocess stdio (like `lake serve`),
+* subprocess stdio (like `lake serve`), or
 * a [UNIX domain socket](https://en.wikipedia.org/wiki/Unix_domain_socket) named
   `lspleank.sock` within a `lean` subdirectory inside the *user runtime directory*
-  (see the [Runtime directory reference](#runtime-directory-reference) section), or
-* a [UNIX domain socket](https://en.wikipedia.org/wiki/Unix_domain_socket) named
-  `.lspleank.sock` within a
-  [Lake workspace directory](https://lean-lang.org/doc/reference/latest/Build-Tools-and-Distribution/Lake/).
+  (see the [Runtime directory reference](#runtime-directory-reference) section).
 
 When the `lspleank` program (and thus also `webleank`) makes Leank LSP connections, it prioritizes
-the Lake workspace
-directory socket first, then the user runtime directory socket, and finally a subprocess stdio connection (depending on the subcommand).
+the user runtime directory socket first and then defaults to a subprocess stdio
+connection (depending on the subcommand).
 
 A Leank LSP session is per Lake workspace and does not support "workspace" as defined by an
 editor. The program `lspleank` multiplexes Leank LSP

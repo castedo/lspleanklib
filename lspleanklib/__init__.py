@@ -1,3 +1,4 @@
+from .aio import DuplexStream
 from .jsonrpc import (
     ErrorCode,
     JsonRpcMsg,
@@ -13,14 +14,18 @@ from .jsonrpc import (
 )
 from .lspleank import lspleank_connect_main
 from .server import (
+    AsyncProgram,
     RpcDirChannelFactory,
     RpcSubprocessFactory,
+    async_stdio_main,
     channel_lsp_server,
     get_user_socket_path,
 )
 from .util import LspAny, LspObject
 
 __all__ = (
+    'AsyncProgram',
+    'DuplexStream',
     'ErrorCode',
     'JsonRpcMsg',
     'LspAny',
@@ -34,6 +39,7 @@ __all__ = (
     'RpcMsgChannel',
     'RpcMsgConnection',
     'RpcSubprocessFactory',
+    'async_stdio_main',
     'awaitable_error',
     'channel_lsp_server',
     'get_user_socket_path',
