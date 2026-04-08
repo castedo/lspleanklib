@@ -1,5 +1,5 @@
 """
-Adapt a Lake LSP server as a Leank service/server.
+Adapt a Lake LSP server as a Leank LSP server.
 """
 
 import asyncio, argparse, logging, sys

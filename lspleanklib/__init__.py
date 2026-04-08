@@ -1,3 +1,7 @@
+"""
+Public names. Don't use submodule names externally.
+"""
+
 from .aio import DuplexStream
 from .jsonrpc import (
     ErrorCode,
@@ -20,6 +24,7 @@ from .server import (
     async_stdio_main,
     channel_lsp_server,
     get_user_socket_path,
+    standardize_server_capabilities,
 )
 from .util import LspAny, LspObject
 
@@ -45,4 +50,5 @@ __all__ = (
     'get_user_socket_path',
     'json_rpc_channel',
     'lspleank_connect_main',
+    'standardize_server_capabilities',
 )

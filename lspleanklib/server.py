@@ -24,7 +24,7 @@ from .jsonrpc import (
     awaitable_error,
     json_rpc_channel,
 )
-from .util import LspObject, awaitable, get_obj, get_uri_path, log
+from .util import LspAny, LspObject, awaitable, get_obj, get_uri_path, log
 
 import socket
 
@@ -37,6 +37,14 @@ LSP_SERVER_NAME = "lspleank"
 
 class RpcDirChannelFactory(typing.Protocol):
     async def anew(self, work_root: Path) -> RpcChannel: ...
+
+
+def standardize_server_capabilities(capabilities: LspAny) -> LspObject:
+    reduced_caps = capabilities if isinstance(capabilities, dict) else {}
+    reduced_caps.pop('experimental', None)
+    reduced_caps.pop('inlayHintProvider', None)
+    reduced_caps.pop('semanticTokensProvider', None)
+    return reduced_caps
 
 
 def text_doc_caps(init_params: LspObject) -> LspObject:
@@ -61,10 +69,7 @@ def leank_init_response(init_response: Response) -> Response:
         return init_response
     if isinstance(init_response.result, dict):
         server_caps = init_response.result.get('capabilities')
-        server_caps = server_caps if isinstance(server_caps, dict) else {}
-        server_caps.pop('experimental', None)
-        server_caps.pop('inlayHintProvider', None)
-        server_caps.pop('semanticTokensProvider', None)
+        server_caps = standardize_server_capabilities(server_caps)
     else:
         server_caps = {}
     return Response(
@@ -238,9 +243,9 @@ class DirChannelLspInitializer(LspInitializer):
         if self._initializing:
             return Response.from_error_code(ErrorCode.InvalidRequest)
         lsp_root = get_uri_path(init_params, 'rootUri')
-        init_call = leank_init_call(lsp_root, text_doc_caps(init_params))
         channel = await self._factory.anew(lsp_root)
         self._tg.create_task(channel.pump(self._client))
+        init_call = MethodCall('initialize', init_params)
         aw_response = await channel.proxy.request(init_call)
         response = await aw_response
         if response.error is None:

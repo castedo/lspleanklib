@@ -29,6 +29,12 @@ For more information, visit [Webleank](https://gitlab.com/castedo/webleank) and
 [lean.castedo.com](https://lean.castedo.com).
 
 
+Leank LSP Reference
+-------------------
+
+[Leank LSP Reference](docs/leank-lsp.md)
+
+
 CLI Reference
 -------------
 
@@ -109,40 +115,3 @@ options:
 Runs as a Leank LSP server.
 By default, `lake serve` will be adapted.
 The optional command following `--` can be used as an alternative to `lake serve`.
-
-
-Leank LSP Reference
--------------------
-
-Lspleanklib implements *Leank LSP*, a subset of standard LSP.
-It serves as a simplified intermediary LSP between:
-
-* the standard LSP expected by any LSP-compatible editor, and
-* the non-standard LSP variant implemented by `lake serve`.
-
-Lspleanklib supports two possible connection methods for *Leank LSP*:
-
-* subprocess stdio (like `lake serve`), or
-* a [UNIX domain socket](https://en.wikipedia.org/wiki/Unix_domain_socket) named
-  `lspleank.sock` within a `lean` subdirectory inside the *user runtime directory*
-  (see the [Runtime directory reference](#runtime-directory-reference) section).
-
-The `lspleank stdio` and `lspleank lake` commands make subprocess stdio connections,
-while the `lspleank connect` command connects to the user runtime directory socket.
-
-A Leank LSP session is per Lake workspace and does not support "workspace" as defined by an
-editor. The program `lspleank` multiplexes Leank LSP
-sessions into a single unified standard LSP session, which appears as a single workspace to an
-LSP-compatible editor.
-
-
-Runtime directory reference
----------------------------
-
-Lspleanklib creates a `lean` subdirectory in the *user runtime directory*,
-using the `platformdirs` Python package to determine its location, if installed.
-Otherwise, Lspleanklib independently determines the location on Linux and macOS.
-On Linux, this corresponds to the environment variable `XDG_RUNTIME_DIR`.
-On macOS, this corresponds to `~/Library/Caches/TemporaryItems/`.
-For more details, consult the [platformdirs
-documentation](https://platformdirs.readthedocs.io/en/latest/platforms.html).
