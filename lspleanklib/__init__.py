@@ -26,6 +26,7 @@ from .server import (
     get_user_socket_path,
     standardize_server_capabilities,
 )
+from .lake import is_excluded_method, is_ok_method
 from .util import LspAny, LspObject
 
 __all__ = (
@@ -48,6 +49,8 @@ __all__ = (
     'awaitable_error',
     'channel_lsp_server',
     'get_user_socket_path',
+    'is_excluded_method',
+    'is_ok_method',
     'json_rpc_channel',
     'lspleank_connect_main',
     'standardize_server_capabilities',

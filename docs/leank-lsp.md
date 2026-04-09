@@ -100,6 +100,29 @@ typeDefinitionProvider
 workspaceSymbolProvider
 ```
 
+Excluded Lake server methods
+----------------------------
+
+The following LSP methods are filtered out of Lake LSP and excluded from Leank LSP:
+```
+$/lean/*
+client/registerCapability
+client/unregisterCapability
+telemetry/*
+workspace/applyEdit
+workspace/inlayHint/*
+workspace/semanticTokens/*
+workspace/workspaceFolders
+```
+
+Most exclusions are to simplify Leank LSP, and in a few cases, to avoid
+non-standard Lake-variant LSP.
+
+Note that a proxy acting as both a Leank server and a Lake client can still make use of special
+Lake LSP methods. This is, for example, what `webleank` does. The exclusions apply
+only to communication between a Leank LSP client (such as `lspleank`) and a Leank
+LSP server (such as `lakelspout`).
+
 
 Runtime directory reference
 ---------------------------

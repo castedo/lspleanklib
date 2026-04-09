@@ -24,7 +24,6 @@ from .util import awaitable, get_uri_path, log
 
 OK_METHODS = [
   '$/progress',
-  'textDocument/',
   'window/logMessage',
   'window/showMessage',
   'window/showMessageRequest',
@@ -32,25 +31,28 @@ OK_METHODS = [
 
 
 def is_ok_method(method: str) -> bool:
-    for prefix in OK_METHODS:
-        if method.startswith(prefix):
-            return True
-    return False
+    return method in OK_METHODS or method.startswith('textDocument/')
 
 
 EXCLUDED_METHODS = [
-    '$/lean/',
     'client/registerCapability',
     'client/unregisterCapability',
-    'telemetry/',
     'workspace/applyEdit',
-    'workspace/inlayHint/',
-    'workspace/semanticTokens/',
     'workspace/workspaceFolders'
 ]
 
+
+EXCLUDED_METHOD_PREFIXES = [
+    '$/lean/',
+    'telemetry/',
+    'workspace/inlayHint/',
+    'workspace/semanticTokens/',
+]
+
 def is_excluded_method(method: str) -> bool:
-    for prefix in EXCLUDED_METHODS:
+    if method in EXCLUDED_METHODS:
+        return True
+    for prefix in EXCLUDED_METHOD_PREFIXES:
         if method.startswith(prefix):
             return True
     return False
