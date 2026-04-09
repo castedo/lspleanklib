@@ -7,26 +7,45 @@ This repository is online at both:
 * [github.com](https://github.com/castedo/lspleanklib) as a mirror
 
 
-Lspleanklib is a low-level library that implements functionality used by
-[Webleank](https://gitlab.com/castedo/webleank/), including:
+For installation instructions and additional information,
+visit [lean.castedo.com/lspleank](https://lean.castedo.com/lspleank).
+
+
+Lspleanklib is a low-level library that includes two CLI utilities:
+
+* `lspleank`: an LSP server to run inside an editor process that also acts as an [Leank LSP](./docs/leank-lsp.md) client
+* `lakelspout`: a stdio LSP proxy that adapts Lake LSP to [Leank LSP](./docs/leank-lsp.md)
+
+LSP communication between an LSP-compatible editor, these two utilities, and `lake serve` is:
+```
+[[ Editor (LSP client) ]]
+       ⇵
+    standard
+      LSP
+       ⇵
+[[ lspleank (both standard LSP server & Leank LSP client) ]]
+       ⇵
+   Leank-flavor
+      LSP
+       ⇵
+[[ lakelspout (both Leank LSP server & Lake LSP client) ]]
+       ⇵
+   Lake-flavor
+      LSP
+       ⇵
+[[ lake serve ]]
+```
+
+Lspleanklib also implements functionality for:
 
 * LSP (Language Server Protocol)
 * JSON-RPC
-* Multiplexing multiple `lake serve` workspace sessions into a single unified editor LSP session
-* Connecting to `lake serve` via local UNIX domain sockets
+* Multiplexing multiple Lake workspace sessions into a single unified editor LSP session
+* Connecting (indirectly) to `lake serve` via local UNIX domain sockets
 * Running `lake serve` outside the editor process
 * Proper reading of stdin with Python asyncio
 
-There are no required dependencies on Linux and macOS. However, Windows requires the Python
-package `platformdirs` to be installed. The pip install package specification
-`lspleanklib[crossplatform]` will add `platformdirs` as a requirement.
-
-This package also includes two CLI utilities for advanced usage:
-* `lspleank`: an LSP server used by Webleank to run inside an editor process
-* `lakelspout`: a stdio LSP proxy that adapts Lake LSP to Leank LSP
-
-For more information, visit [Webleank](https://gitlab.com/castedo/webleank) and
-[lean.castedo.com](https://lean.castedo.com).
+The high-level application [Webleank](https://gitlab.com/castedo/webleank/) uses `lspleanklib`.
 
 
 Leank LSP Reference
@@ -112,6 +131,36 @@ options:
 
 #### Subcommand `stdio`
 
-Runs as a Leank LSP server.
+Runs as a [Leank LSP](./docs/leank-lsp.md) server.
 By default, `lake serve` will be adapted.
 The optional command following `--` can be used as an alternative to `lake serve`.
+
+
+### CLI interaction examples
+
+The following command runs a Lake-flavor LSP server:
+```
+lake serve
+```
+
+The following command runs a [Leank-flavor LSP](./docs/leank-lsp.md) server that is also a Lake LSP client to the previous command:
+```
+lakelspout stdio -- lake serve
+```
+which is functionally equivalent to:
+```
+lakelspout stdio
+```
+
+The following command runs a standard LSP server that is a Leank LSP client to the previous command:
+```
+lspleank stdio -- lakelspout stdio -- lake serve
+```
+which is functionally equivalent to:
+```
+lspleank stdio -- lakelspout stdio
+```
+which is functionally equivalent to:
+```
+lspleank lake
+```

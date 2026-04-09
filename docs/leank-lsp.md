@@ -2,34 +2,12 @@ Leank LSP Technical Reference
 =============================
 
 This reference documents the "Leank-flavor LSP" as implemented by `lspleanklib` v0.3.
-
-Background
-----------
-
-Lspleanklib implements *Leank LSP*, a subset of both the [standard LSP (Language Server
+*Leank LSP* is a subset of both the [standard LSP (Language Server
 Protocol)](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/)
 and the LSP variant implemented by
 [Lake](https://lean-lang.org/doc/reference/latest/Build-Tools-and-Distribution/Lake/).
 
-
-### CLI examples
-
-The `lspleank` CLI program from the [`lspleanklib` Python
-package](https://pypi.org/project/lspleanklib/) is a Leank LSP client (and also a standard
-LSP server). The `lakelspout` CLI program from `lspleanklib` is a Leank LSP server (and
-also a Lake LSP client of `lake serve`).
-
-```
-Editor (LSP client)
-   ⇵
-lspleank (both standard LSP server & Leank LSP client)
-   ⇵
-lakelspout (both Leank LSP server & Lake LSP client)
-   ⇵
-lake serve
-```
-
-The high-level application [`webleank`](https://pypi.org/project/webleank/) uses `lspleanklib`.
+See the [README.md](../README.md) for background information.
 
 
 ### LSP rootUri
