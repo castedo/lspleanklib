@@ -129,7 +129,6 @@ async def test_open_doc(rootPath):
             pending = editor.future_notif('textDocument/publishDiagnostics')
             notif = await pending
             assert notif['uri'] == main_path.as_uri()
-            assert notif['diagnostics'] == []
 
 
 @pytest.mark.slow

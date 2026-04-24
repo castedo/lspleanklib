@@ -24,7 +24,7 @@ lspleank = "lspleanklib.lspleank:main"
 lakelspout = "lspleanklib.lakelspout:main"
 
 [tool.setuptools_scm]
-version_file = "_version.py"
+version_file = "lspleanklib/_version.py"
 
 [dependency-groups]
 test = [

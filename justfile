@@ -3,14 +3,16 @@
 default:
     just --list
 
-test:
-    ruff check lspleanklib || true
-    mypy --strict lspleanklib
-    mypy tests --cache-dir tests/.mypy_cache
+test-runtime:
     pytest -vv tests --timeout=2 \
 #      -m 'not slow' \
 #      --durations=3 \
 #      --log-cli-level=DEBUG \
+
+test: && test-runtime
+    ruff check lspleanklib || true
+    mypy --strict lspleanklib
+    mypy tests --cache-dir tests/.mypy_cache
 
 clean:
     rm -rf dist
