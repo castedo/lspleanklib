@@ -196,6 +196,7 @@ async def test_empty_stdin_subproc() -> None:
 async def test_loop_pylsp():
     async with aio_xpipe() as (outer, inner):
         tloop = asyncio.create_task(ok_server_loop(inner, ["pylsp"]))
+        Path("/tmp/lspleank-tests").mkdir(exist_ok=True)  # referenced by INIT_BYTES
         outer.aout.write(INIT_BYTES)
         await outer.aout.drain()
         msg = await read_message(outer.ain)

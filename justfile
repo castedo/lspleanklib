@@ -4,7 +4,10 @@ default:
     just --list
 
 test-runtime:
-    pytest -vv tests --timeout=2 \
+    tests/prep_lake_package_artifacts.sh
+    pytest tests \
+      -vv \
+      --timeout=3 \
 #      -m 'not slow' \
 #      --durations=3 \
 #      --log-cli-level=DEBUG \

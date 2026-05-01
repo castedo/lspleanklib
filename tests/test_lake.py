@@ -131,6 +131,15 @@ async def test_open_doc(rootPath):
             assert notif['uri'] == main_path.as_uri()
 
 
+async def aw_diag_msg(editor: MockEditor, file: Path, msg: str):
+    while True:
+        pending = editor.future_notif('textDocument/publishDiagnostics')
+        notif = await pending
+        if notif['uri'] == file.as_uri() and notif['diagnostics']:
+            if notif['diagnostics'][0]['message'] == msg:
+                break
+
+
 @pytest.mark.slow
 async def test_workspace_symbol_search():
     rootPath = CASES_DIR
@@ -142,11 +151,8 @@ async def test_workspace_symbol_search():
             await rpc.notify(didOpen_call(min_main_path))
             await rpc.notify(didOpen_call(alt_main_path))
 
-            while True:
-                pending = editor.future_notif('textDocument/publishDiagnostics')
-                notif = await pending
-                if notif['uri'] == alt_main_path.as_uri():
-                    break
+            await aw_diag_msg(editor, min_main_path, '"hi"')
+            await aw_diag_msg(editor, alt_main_path, '"ALTERNATIVE!"')
 
             aw_response = await rpc.request(MC('workspace/symbol', {'query': 'foobarsical'}))
             response = await aw_response
